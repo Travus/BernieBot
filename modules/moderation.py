@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta
 from io import StringIO
 from typing import Optional, List
 
-from discord import File, Forbidden, HTTPException, Member, Message, NotFound, TextChannel
+from discord import Colour, Embed, File, Forbidden, HTTPException, Member, Message, NotFound, TextChannel
 from discord.ext import commands
 
 import travus_bot_base as tbb
@@ -40,9 +41,43 @@ class ModerationCog(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     @commands.command(name="whois", usage="<USER>")
-    async def whois(self, ctx: commands.Context, user: Member):
+    async def whois(self, ctx: commands.Context, user):
         """Supplies information about a user on the server, such as join date, registration date, ID and similar."""
-        pass
+        try:
+            user = await commands.MemberConverter().convert(ctx, user)
+        except commands.BadArgument:
+            await ctx.send("Could not find matching member.")
+            return
+        join_position = sorted(ctx.guild.members, key=lambda mem: mem.joined_at).index(user) + 1
+        boost_date = None if user.premium_since is None else user.premium_since.strftime('%a, %b %d, %Y %I:%M %p')
+        if boost_date is not None:
+            boost_date = f"**Boosting:** {boost_date}"
+        messages = 0
+        last_message = None
+        for channel in ctx.guild.text_channels:  # Count messages by user across all channels, remember newest.
+            if not channel.guild.me.permissions_in(channel).read_message_history:
+                continue
+            async for message in channel.history(limit=10000, after=datetime.utcnow() - timedelta(hours=12)):
+                if message.author == user:
+                    messages += 1
+                    if last_message is None or message.created_at > last_message.created_at:
+                        last_message = message
+        embed = Embed(colour=Colour(0x4a4a4a), description=f"**{user.mention}**", timestamp=datetime.utcnow())
+        embed.set_thumbnail(url=user.avatar_url)
+        embed.set_author(name=str(user), icon_url=user.avatar_url)
+        embed.set_footer(text=ctx.author.name, icon_url=ctx.author.avatar_url)
+        embed.add_field(name="Information", value=f"**Name**: {user}\n**Nickname:**: {user.nick}\n**ID:** {user.id}\n"
+                                                  f"**Profile Picture:** [Link]({user.avatar_url})\n"
+                                                  f"**Status:** {user.status}\n**Bot:** {'Yes' if user.bot else 'No'}\n", inline=False)
+        embed.add_field(name="Dates", value=f"**Registered:** {user.created_at.strftime('%a, %b %d, %Y %I:%M %p')}\n"
+                                            f"**Joined:** {user.joined_at.strftime('%a, %b %d, %Y %I:%M %p')}\n"
+                                            f"**Join Position:** {join_position}\n{'' if boost_date is None else boost_date}", inline=False)
+        embed.add_field(name="Roles", value=", ".join([role.mention if role.name != '@everyone' else role.name for role in user.roles]), inline=False)
+        embed.add_field(name="Last Message", value="None in 12 hours!" if last_message is None
+                        else f"In {last_message.channel.mention}\nAt {str(last_message.created_at)[0:16]}"
+                        f"\n[Link To Message]({last_message.jump_url})", inline=True)
+        embed.add_field(name="Messages Last 12H", value=f"{messages} messages", inline=True)
+        await ctx.send(embed=embed)
 
     @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
@@ -52,10 +87,11 @@ class ModerationCog(commands.Cog):
         If a channel is passed along then the bot will remove messages from that channel instead. If a user is passed along
         then among the X messages only messages by that user are deleted. The bot will generate a log of deleted messages and
         post it in the alerts channel."""
+
         def check_user(message: Message) -> bool:
             return message.author == user
 
-        alert_id = 585588234499653663
+        alert_id = 353246496952418305
         channel = channel or ctx.channel
         if channel.guild != ctx.guild:
             await ctx.send(f"The `{tbb.clean(ctx, channel.name)}` channel is not part of this server.")
@@ -71,7 +107,7 @@ class ModerationCog(commands.Cog):
             else:
                 deleted_messages = await channel.purge(limit=amount, check=check_user)
             text += f"Messages deleted by {ctx.author.name}#{ctx.author.discriminator} ({ctx.author.id}) in " \
-                   f"{ctx.channel.name} ({ctx.channel.id}) on {tbb.cur_time()}:\n\n"
+                    f"{ctx.channel.name} ({ctx.channel.id}) on {tbb.cur_time()}:\n\n"
         except (HTTPException, NotFound, Forbidden):
             await ctx.send("Something went wrong during deletion.\nPosting log of deleted messages.")
         finally:

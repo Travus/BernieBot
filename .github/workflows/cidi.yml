@@ -1,0 +1,35 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ master ]
+    paths-ignore: [ '.github/**', '.gitignore' ]
+
+jobs:
+  push_image:
+    name: Push to DockerHub
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '#skip-ci')"
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@master
+      - name: Build & Push Image
+        uses: docker/build-push-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: travus/bernie_bot
+          tags: latest
+  update_deployment:
+    name: Update deployment
+    needs: push_image
+    runs-on: ubuntu-latest
+    if: "contains(github.event.head_commit.message, '#deploy')"
+    steps:
+      - name: Deploy via SSH command
+        uses: appleboy/ssh-action@v0.0.8
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: ./redeploy.sh

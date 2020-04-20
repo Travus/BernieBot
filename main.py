@@ -19,21 +19,21 @@ def setup_bot(bot_object: tbb.TravusBotBase):
     db.execute("CREATE TABLE IF NOT EXISTS default_modules(module TEXT PRIMARY KEY NOT NULL)")
     db.execute("CREATE TABLE IF NOT EXISTS command_states(command TEXT PRIMARY KEY NOT NULL, state NUMERIC NOT NULL)")
     db_con.commit()
-    db.execute("SELECT value FROM settings WHERE flag = ?", ("discord_token", ))  # Get bot token.
+    db.execute("SELECT value FROM settings WHERE flag = ?", ("discord_token",))  # Get bot token.
     discord_token = db.fetchone()
-    db.execute("SELECT value FROM settings WHERE flag = ?", ("prefix", ))  # Get prefix.
+    db.execute("SELECT value FROM settings WHERE flag = ?", ("prefix",))  # Get prefix.
     loaded_prefix = db.fetchone()
     if loaded_prefix is None:
         db.execute("INSERT INTO settings VALUES ('prefix', '!')")  # Commit default prefix if none is set.
         db_con.commit()
-        loaded_prefix = ("!", )  # Use default prefix if none is set.
+        loaded_prefix = ("!",)  # Use default prefix if none is set.
     db.close()
     db_con.close()
     if discord_token is None:  # Stop if no Discord token was found.
         print("Error: Discord bot token missing. Please run the setup file to set up the bot.")
         exit(1)
     if loaded_prefix[0] == "":  # If prefix was 'removed' set it to None type.
-        loaded_prefix = (None, )
+        loaded_prefix = (None,)
     bot_object.prefix = loaded_prefix[0]
     return discord_token[0].strip()  # Return Discord token.
 
@@ -49,6 +49,7 @@ async def get_prefix(bot_object, message):
 if __name__ == "__main__":
     bot = tbb.TravusBotBase(command_prefix=get_prefix)  # Define bot object.
 
+
     class CustomHelp(commands.HelpCommand):
         """Class for custom help command."""
 
@@ -62,12 +63,13 @@ if __name__ == "__main__":
         async def _send_help_entry(self, command_object):
             if command_object.qualified_name in bot.help.keys():
                 if command_object.enabled:
-                    embed = bot.help[command_object.qualified_name].make_help_embed(self.context)  # Send command help info if enabled.
+                    embed = bot.help[command_object.qualified_name].make_help_embed(self.context)
                     await self.get_destination().send(embed=embed)
                 else:
-                    await self.get_destination().send(f"The `{command_object.qualified_name}` command is currently disabled.")  # Give feedback if disabled.
+                    await self.get_destination().send(f"The `{command_object.qualified_name}` command is currently "
+                                                      f"disabled.")
             else:
-                await self.get_destination().send("No help information is registered for this command.")  # Give feedback if no help info registered.
+                await self.get_destination().send("No help information is registered for this command.")
 
         async def _send_command_list(self, full_mapping):
             categories = {}  # List of categorized commands.
@@ -81,23 +83,25 @@ if __name__ == "__main__":
             for com_text, com in filtered_mapping.items():
                 if com.qualified_name in bot.help.keys():
                     command_help = bot.help[com.qualified_name]  # Get command help info.
-                    category = command_help.category.lower() if command_help.category else "no category"  # Get command category.
+                    category = command_help.category.lower() if command_help.category else "no category"
                     if category not in categories.keys():  # Add category if it wasn't encountered before.
                         categories[category] = []
                     categories[category].append(com_text)  # Add command to category.
             for category in sorted(categories.keys()):
-                if len(msg) + len(f"**{category.title()}**\n{', '.join(sorted(categories[category]))}\n\n") > 1900:  # Send message if it's over 1900 characters long.
+                if len(msg) + len(f"**{category.title()}**\n{', '.join(sorted(categories[category]))}\n\n") > 1900:
                     msg += '1 = In DMs only.\n' if len(non_passing) else ""
                     msg += f"Use `{bot.get_bot_prefix()}help <COMMAND>` for more info on individual commands."
-                    await self.get_destination().send(f"__**Help Info {self.context.message.author.mention}:**__\n\n{self.remove_mentions(msg)}")
+                    await self.get_destination().send(f"__**Help Info {self.context.message.author.mention}:**__\n\n"
+                                                      f"{self.remove_mentions(msg)}")
                     msg = "\n"  # Sets message to newline so that it doesn't trigger 'no info found' condition.
                 msg += f"**{category.title()}**\n{', '.join(sorted(categories[category]))}\n\n"
             if msg == "":
                 msg = "No help information was found."
             else:
                 msg += '1 = In DMs only.\n' if len(non_passing) else ""
-                msg += f"Use `{bot.get_bot_prefix()}help <COMMAND>` for more info on individual commands."  # Send message.
-            await self.get_destination().send(f"__**Help Info {self.context.message.author.mention}:**__\n\n{self.remove_mentions(msg)}")
+                msg += f"Use `{bot.get_bot_prefix()}help <COMMAND>` for more info on individual commands."
+            await self.get_destination().send(f"__**Help Info {self.context.message.author.mention}:**__\n\n"
+                                              f"{self.remove_mentions(msg)}")
 
         async def send_bot_help(self, mapping):
             """Function that triggers when help command is used without command."""
@@ -109,7 +113,8 @@ if __name__ == "__main__":
 
         async def send_command_help(self, command_object: commands.Command):
             """Function that triggers when help command is used with a command."""
-            while command_object.qualified_name not in bot.help.keys() and hasattr(command_object, "parents") and len(command_object.parents):
+            while (command_object.qualified_name not in bot.help.keys()
+                   and hasattr(command_object, "parents") and len(command_object.parents)):
                 command_object = command_object.parents[0]  # Get parent in case it has help text.
             await self._send_help_entry(command_object)
 
@@ -138,19 +143,28 @@ if __name__ == "__main__":
     async def on_ready():
         """Loads additional flags and help info, loads default modules and sets bot presence."""
         if not bot.has_started:  # If first time setup has not been completed.
-            delete_msgs = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?", ("delete_messages",))
+            delete_msgs = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?",
+                                               ("delete_messages",))
             if delete_msgs is None:  # If no delete message flag is in database, set it to off in runtime and database.
                 await tbb.db_set(bot.db_con, "INSERT INTO settings VALUES (?, ?)", ("delete_messages", "0"))
-                delete_msgs = (0, )
+                delete_msgs = (0,)
             bot.delete_messages = int(delete_msgs[0])  # Set delete messages flag.
-            bot_author = "[Travus](https://github.com/Travus):\n\tTravus Bot Base\n\tCore functions\n\n[Rapptz](https://github.com/Rapptz):\n\tDiscord.py\n\tasqlite"
-            bot_description = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?", ("bot_description",))
-            bot_description = (bot_description or ("No description for the bot was found. A description can be set using the setup file.", ))[0]
-            bot_additional_credits = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?", ("bot_additional_credits",))
+            bot_author = ("[Travus](https://github.com/Travus):\n\tTravus Bot Base\n\tCore functions\n\n"
+                          "[Rapptz](https://github.com/Rapptz):\n\tDiscord.py\n\tasqlite")
+            bot_description = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?",
+                                                   ("bot_description",))
+            bot_description = (bot_description or ("No description for the bot was found. A description can be set "
+                                                   "using the setup file.",))[0]
+            bot_additional_credits = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?",
+                                                          ("bot_additional_credits",))
             if bot_additional_credits:
-                bot_additional_credits = bot_additional_credits[0].replace("\\n", "\n").replace("\\r", "\n").replace("\\t", "\t")
-            bot.add_module(bot.user.name, bot_author, None, bot_description, bot_additional_credits, bot.user.avatar_url)  # Add about command for bot.
-            bot.add_command_help([com for com in bot.commands if com.name == "help"][0], "Core", None, ["", "info", "clear"])  # Add help info for help command.
+                bot_additional_credits = (bot_additional_credits[0].replace("\\n", "\n")
+                                                                   .replace("\\r", "\n")
+                                                                   .replace("\\t", "\t"))
+            bot.add_module(bot.user.name, bot_author, None, bot_description, bot_additional_credits,
+                           bot.user.avatar_url)  # Add about command for bot.
+            bot.add_command_help([com for com in bot.commands if com.name == "help"][0], "Core", None,
+                                 ["", "info", "clear"])  # Add help info for help command.
             try:  # Try loading core_commands.py file containing basic non-unloadable commands.
                 if "core_commands.py" in os.listdir("."):
                     bot.load_extension("core_commands")
@@ -166,10 +180,10 @@ if __name__ == "__main__":
                     e = e.__cause__
                 print(f"[{tbb.cur_time()}] Core functionality file failed to load.\n\nError:\n{e}")
                 exit(3)
-            default_modules = await tbb.db_get_all(bot.db_con, "SELECT module FROM default_modules", ())  # Get default modules.
+            default_modules = await tbb.db_get_all(bot.db_con, "SELECT module FROM default_modules", ())
             if default_modules:  # If default modules were found, get their names from the response.
                 default_modules = [mod[0] for mod in default_modules]
-            for mod in default_modules:  # Save module and help info before loading in case we need to roll back, then load default modules.
+            for mod in default_modules:  # Save module and help info in case we need roll back, then load defaults.
                 old_help = dict(bot.help)
                 old_modules = dict(bot.modules)
                 bot.extension_ctx = None
@@ -180,7 +194,7 @@ if __name__ == "__main__":
                         raise FileNotFoundError("Core commands file not found.")
                 except FileNotFoundError:  # If module wasn't found.
                     print(f"[{tbb.cur_time()}] Default module '{mod}' not found.")
-                except Exception as e:  # If en error was encountered while loading default module, reload old info ad error to console.
+                except Exception as e:  # If en error was encountered while loading default module, reload old info.
                     bot.help = old_help
                     bot.modules = old_modules
                     if isinstance(e, commands.ExtensionNotFound):  # If import error, clarify further.
@@ -189,10 +203,12 @@ if __name__ == "__main__":
                     bot.last_module_error = f"The `{mod}` module failed while loading. The error was:\n\n{str(e)}"
                 else:
                     print(f"Default module '{mod}' loaded.")
-            await bot.update_command_states()  # Make sure any loaded commands are in the right state. (hidden, disabled)
+            await bot.update_command_states()  # Make sure all commands are in the right state. (hidden, disabled)
             bot.has_started = True  # Flag that the first time setup has been completed.
-        loaded_prefix = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?", ("prefix",))  # Get bot prefix for display in status message.
-        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=f"prefix: {loaded_prefix[0]}" if loaded_prefix[0] else "pings only"))  # Display status message.
+        loaded_prefix = await tbb.db_get_one(bot.db_con, "SELECT value FROM settings WHERE flag = ?", ("prefix",))
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening,
+                                                            name=(f"prefix: {loaded_prefix[0]}" if loaded_prefix[0]
+                                                                  else "pings only")))  # Display status message.
         bot.is_connected = 1  # Flag that the bot is currently connected to Discord.
         print(f"{bot.user.name} is ready!\n------------------------------")
 
@@ -218,19 +234,25 @@ if __name__ == "__main__":
     @bot.event
     async def on_command_error(ctx: commands.Context, error=None):
         """Global error handler for miscellaneous errors."""
-        if isinstance(error, (commands.NoPrivateMessage, commands.CommandOnCooldown, commands.DisabledCommand, commands.CheckFailure)):
+        if isinstance(error, (commands.NoPrivateMessage, commands.CommandOnCooldown, commands.DisabledCommand,
+                              commands.CheckFailure)):
             pass
         elif isinstance(error, commands.UserInputError):  # Send correct syntax based on command usage variable.
             if hasattr(ctx.command, "usage") and ctx.command.usage:
-                await ctx.send(f"Correct syntax: `{bot.get_bot_prefix()}{ctx.command.full_parent_name + ' ' if ctx.command.full_parent_name else ''}{ctx.invoked_with} {ctx.command.usage or ''}`")
+                await ctx.send(f"Correct syntax: `{bot.get_bot_prefix()}"
+                               f"{ctx.command.full_parent_name + ' 'if ctx.command.full_parent_name else ''}"
+                               f"{ctx.invoked_with} {ctx.command.usage or ''}`")
         elif isinstance(error, commands.NotOwner):  # Log to console.
             print(f'[{tbb.cur_time()}] {ctx.message.author.id}: Command "{ctx.command}" requires bot owner status')
         elif isinstance(error, commands.MissingPermissions):  # Log to console.
-            print(f'[{tbb.cur_time()}] {ctx.message.author.id}: Command "{ctx.command}" requires additional permissions: {", ".join(error.missing_perms)}')
+            print(f'[{tbb.cur_time()}] {ctx.message.author.id}: Command "{ctx.command}" requires additional '
+                  f'permissions: {", ".join(error.missing_perms)}')
         elif isinstance(error, commands.MissingRole):  # Log to console.
-            print(f'[{tbb.cur_time()}] {ctx.message.author.id}: Command "{ctx.command}" requires role: {error.missing_role}')
+            print(f'[{tbb.cur_time()}] {ctx.message.author.id}: Command "{ctx.command}" requires role: '
+                  f'{error.missing_role}')
         elif isinstance(error, commands.MissingAnyRole):  # Log to console.
-            print(f'[{tbb.cur_time()}] {ctx.message.author.id}: Command "{ctx.command}" requires role: {" or ".join(error.missing_roles)}')
+            print(f'[{tbb.cur_time()}] {ctx.message.author.id}: Command "{ctx.command}" requires role: '
+                  f'{" or ".join(error.missing_roles)}')
         elif isinstance(error, commands.CommandNotFound):  # Log to console.
             print(f'[{tbb.cur_time()}] {ctx.message.author.id}: {error}')
         elif isinstance(error, CCError):  # Log to console if message wasn't properly sent to Discord.

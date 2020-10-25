@@ -1,0 +1,22 @@
+version: '3'
+
+services:
+  bot:
+    image: "travus/bernie_bot:latest"
+    volumes:
+      - modules:/usr/src/app/modules
+
+  postgres:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRESS_USER: postgres
+      POSTGRES_DB: discord_bot
+    volumes:
+      - database:/var/lib/postgresql/data
+
+volumes:
+  database:
+    external: false
+  modules:
+    external: false

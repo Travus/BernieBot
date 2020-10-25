@@ -11,12 +11,14 @@ import travus_bot_base as tbb
 def setup(bot: tbb.TravusBotBase):
     """Setup function ran when module is loaded."""
     bot.add_cog(ModerationCog(bot))  # Add cog and command help info.
-    bot.add_module("Moderation", "[Travus](https://github.com/Travus):\n\tCommands", ModerationCog.usage, """This module includes commands
-                   helpful for moderation, such as retrieving info about users, mass-deleting messages, etc. This module is intended to be
-                   used by moderators, and as such the commands in this section are locked behind permissions and/or roles.""")
-    bot.add_command_help(ModerationCog.whois, "Moderation", {"perms": ["Manage Server"]}, ["Travus#8888", "118954681241174016"])
-    bot.add_command_help(ModerationCog.purge, "Moderation", {"perms": ["Manage Messages"]}, ["50", "50 penguin_pen", "25 Travus#8888",
-                                                                                             "25 bot_room BernieBot#4328"])
+    bot.add_module("Moderation", "[Travus](https://github.com/Travus):\n\tCommands", ModerationCog.usage,
+                   """This module includes commands helpful for moderation, such as retrieving info about users, 
+                   mass-deleting messages, etc. This module is intended to be used by moderators, and as such the 
+                   commands in this section are locked behind permissions and/or roles.""")
+    bot.add_command_help(ModerationCog.whois, "Moderation", {"perms": ["Manage Server"]},
+                         ["Travus#8888", "118954681241174016"])
+    bot.add_command_help(ModerationCog.purge, "Moderation", {"perms": ["Manage Messages"]},
+                         ["50", "50 penguin_pen", "25 Travus#8888", "25 bot_room BernieBot#4328"])
 
 
 def teardown(bot: tbb.TravusBotBase):
@@ -68,11 +70,14 @@ class ModerationCog(commands.Cog):
         embed.set_footer(text=ctx.author.name, icon_url=ctx.author.avatar_url)
         embed.add_field(name="Information", value=f"**Name**: {user}\n**Nickname:**: {user.nick}\n**ID:** {user.id}\n"
                                                   f"**Profile Picture:** [Link]({user.avatar_url})\n"
-                                                  f"**Status:** {user.status}\n**Bot:** {'Yes' if user.bot else 'No'}\n", inline=False)
+                                                  f"**Status:** {user.status}\n**Bot:** "
+                                                  f"{'Yes' if user.bot else 'No'}\n", inline=False)
         embed.add_field(name="Dates", value=f"**Registered:** {user.created_at.strftime('%a, %b %d, %Y %I:%M %p')}\n"
                                             f"**Joined:** {user.joined_at.strftime('%a, %b %d, %Y %I:%M %p')}\n"
-                                            f"**Join Position:** {join_position}\n{'' if boost_date is None else boost_date}", inline=False)
-        embed.add_field(name="Roles", value=", ".join([role.mention if role.name != '@everyone' else role.name for role in user.roles]), inline=False)
+                                            f"**Join Position:** {join_position}\n"
+                                            f"{'' if boost_date is None else boost_date}", inline=False)
+        role_mentions = [role.mention if role.name != '@everyone' else role.name for role in user.roles]
+        embed.add_field(name="Roles", value=", ".join(role_mentions), inline=False)
         embed.add_field(name="Last Message", value="None in 12 hours!" if last_message is None
                         else f"In {last_message.channel.mention}\nAt {str(last_message.created_at)[0:16]}"
                         f"\n[Link To Message]({last_message.jump_url})", inline=True)
@@ -83,10 +88,10 @@ class ModerationCog(commands.Cog):
     @commands.has_permissions(manage_messages=True)
     @commands.command(name="purge", aliases=["prune"], usage="<AMOUNT> (CHANNEL) (USER)")
     async def purge(self, ctx: commands.Context, amount: int, channel: Optional[TextChannel], user: Optional[Member]):
-        """This command can mass-delete messages. The bot will attempt to delete the past X messages from the current channel.
-        If a channel is passed along then the bot will remove messages from that channel instead. If a user is passed along
-        then among the X messages only messages by that user are deleted. The bot will generate a log of deleted messages and
-        post it in the alerts channel."""
+        """This command can mass-delete messages. The bot will attempt to delete the past X messages from the current
+        channel. If a channel is passed along then the bot will remove messages from that channel instead. If a user
+        is passed along then among the X messages only messages by that user are deleted. The bot will generate a log
+        of deleted messages and post it in the alerts channel."""
 
         def check_user(message: Message) -> bool:
             return message.author == user
@@ -115,7 +120,8 @@ class ModerationCog(commands.Cog):
                 await ctx.send("Nothing to delete.")
                 return
             for msg in deleted_messages:  # ToDo: Handle files.
-                text += f"[{str(msg.created_at)[0:16]}] Message {msg.id} by {msg.author} ({msg.author.id}):\n{msg.clean_content}\n\n"
+                text += f"[{str(msg.created_at)[0:16]}] Message {msg.id} by {msg.author} ({msg.author.id}):\n" \
+                        f"{msg.clean_content}\n\n"
             try:
                 alerts = self.bot.get_channel(alert_id) or await self.bot.fetch_channel(alert_id)
             except (HTTPException, NotFound, Forbidden):

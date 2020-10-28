@@ -5,6 +5,7 @@ services:
     image: "travus/bernie_bot:latest"
     volumes:
       - modules:/usr/src/app/modules
+      - ./config.yml:/usr/src/app/config.yml
 
   postgres:
     image: postgres

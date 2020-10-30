@@ -104,28 +104,35 @@ class ModerationCog(commands.Cog):
         if not channel.permissions_for(ctx.author).manage_messages:
             await ctx.send(f"You do not have permissions to delete messages in {tbb.clean(ctx, channel.name)}.")
             return
-        text = ""
         deleted_messages: List[Message] = []
         try:
             if user is None:
                 deleted_messages = await channel.purge(limit=amount)
             else:
                 deleted_messages = await channel.purge(limit=amount, check=check_user)
-            text += f"Messages deleted by {ctx.author.name}#{ctx.author.discriminator} ({ctx.author.id}) in " \
-                    f"{ctx.channel.name} ({ctx.channel.id}) on {tbb.cur_time()}:\n\n"
         except (HTTPException, NotFound, Forbidden):
             await ctx.send("Something went wrong during deletion.\nPosting log of deleted messages.")
         finally:
             if len(deleted_messages) == 0:
                 await ctx.send("Nothing to delete.")
                 return
-            for msg in deleted_messages:  # ToDo: Handle files.
-                text += f"[{str(msg.created_at)[0:16]}] Message {msg.id} by {msg.author} ({msg.author.id}):\n" \
-                        f"{msg.clean_content}\n\n"
+            msg_log = []
+            for msg in deleted_messages:
+                msg_time = f"[{str(msg.edited_at)[0:16]} (edit)]" if msg.edited_at else f"[{str(msg.created_at)[0:16]}]"
+                text = f"{msg_time} Message {msg.id} by {msg.author} ({msg.author.id}):\n"
+                text += (msg.clean_content or "NO TEXT CONTENT IN MESSAGE.") + "\n\n"
+                if msg.attachments:
+                    attachments = "\n".join([attachment.proxy_url for attachment in msg.attachments])
+                    text += f"Attachments:\n{attachments}\n\n"
+                msg_log.append(text)
+            header = f"Messages deleted by {ctx.author.name} ({ctx.author.id}) in {ctx.channel.name} " \
+                     f"({ctx.channel.id}) on {tbb.cur_time()}:\n\n"
+            msg_log.append(header)
             try:
                 alerts = self.bot.get_channel(alert_id) or await self.bot.fetch_channel(alert_id)
             except (HTTPException, NotFound, Forbidden):
                 await ctx.send("Could not retrieve alerts channel.")
                 return
+            output = "".join(reversed(msg_log))
             await alerts.send(content=f"Deletion log by {ctx.author.mention} from {ctx.channel.name}:",
-                              file=File(StringIO(text), filename="Deletion log.txt"))
+                              file=File(StringIO(output), filename="Deletion log.txt"))

@@ -12,8 +12,8 @@ def setup(bot: tbb.TravusBotBase):
     """Setup function ran when module is loaded."""
     bot.add_cog(ModerationCog(bot))  # Add cog and command help info.
     bot.add_module("Moderation", "[Travus](https://github.com/Travus):\n\tCommands", ModerationCog.usage,
-                   """This module includes commands helpful for moderation, such as retrieving info about users, 
-                   mass-deleting messages, etc. This module is intended to be used by moderators, and as such the 
+                   """This module includes commands helpful for moderation, such as retrieving info about users,
+                   mass-deleting messages, etc. This module is intended to be used by moderators, and as such the
                    commands in this section are locked behind permissions and/or roles.""")
     bot.add_command_help(ModerationCog.whois, "Moderation", {"perms": ["Manage Server"]},
                          ["Travus#8888", "118954681241174016"])
@@ -38,7 +38,9 @@ class ModerationCog(commands.Cog):
     @staticmethod
     def usage() -> str:
         """Returns the usage text."""
-        return "For information on how to use the commands in this module, check their help entries."
+        return ("**How To Use The Moderation Module:**\nThis module is meant for use by moderators. It has features "
+                "such as muting users, seeing user information, mass deleting messages, and more. For information on "
+                "how to use the commands in this module, check their respective help entries.")
 
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)

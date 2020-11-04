@@ -2,7 +2,7 @@ import datetime  # To get current time.
 import logging
 from copy import copy  # To copy context in help command.
 from re import compile, findall  # Regex functions used in clean function for detecting mentions.
-from typing import Dict, List, Union, Optional, Callable, Type  # For type-hinting.
+from typing import Dict, Iterable, List, Union, Optional, Callable, Type  # For type-hinting.
 
 import asyncpg
 import discord
@@ -10,6 +10,29 @@ from aiohttp import ClientConnectorError as CCError  # To detect connection erro
 from discord import utils, Forbidden, Embed, Message, User, Member, TextChannel, VoiceChannel, CategoryChannel
 from discord.ext import commands
 from discord.ext.commands import Command, Cog, Bot, Context
+
+
+class ConfigError(commands.CommandError):
+    """Custom exception raised when missing config options."""
+
+    def __init__(self, message: str = ""):
+        """Initialization of ConfigError exception."""
+        self.message = message
+        super().__init__(self.message)
+
+
+def required_config(requirements: Iterable[str]):
+    """Function that makes sure config options are set."""
+
+    async def predicate(predicate_ctx: Context) -> bool:
+        missing = [f"`{requirement}`" for requirement in requirements if requirement not in predicate_ctx.bot.config]
+        missing = ", ".join(missing)
+        if missing:
+            await predicate_ctx.send(f"This command requires the following missing configuration options to be set: "
+                                     f"{missing}.\nPlease contact an administrator for assistance.")
+            raise ConfigError(f"Command {predicate_ctx.command.qualified_name} missing config options: {missing}")
+        return not missing
+    return commands.check(predicate)
 
 
 class GlobalChannel(commands.Converter):
@@ -242,6 +265,7 @@ class TravusBotBase(Bot):
         self.delete_messages: int = 1
         self.is_connected: int = 0
         self.help_command = self._CustomHelp()
+        self.config: Dict[str, str] = {}
 
     def get_bot_prefix(self) -> str:
         """Returns the current bot prefix, or a mention of the bot in text form followed by a space."""

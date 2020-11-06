@@ -86,6 +86,7 @@ class ModerationCog(commands.Cog):
         embed.add_field(name="Messages Last 12H", value=f"{messages} messages", inline=True)
         await ctx.send(embed=embed)
 
+    @tbb.required_config(("alert_channel", ))
     @commands.guild_only()
     @commands.has_permissions(manage_messages=True)
     @commands.command(name="purge", aliases=["prune"], usage="<AMOUNT> (CHANNEL) (USER)")
@@ -98,7 +99,11 @@ class ModerationCog(commands.Cog):
         def check_user(message: Message) -> bool:
             return message.author == user
 
-        alert_id = 353246496952418305
+        try:
+            alert_channel = int(self.bot.config["alert_channel"])
+        except ValueError:
+            raise ValueError(f"Invalid config for 'alert_channel', should be int:  {self.bot.config['alert_channel']}")
+
         channel = channel or ctx.channel
         if channel.guild != ctx.guild:
             await ctx.send(f"The `{tbb.clean(ctx, channel.name)}` channel is not part of this server.")
@@ -131,7 +136,7 @@ class ModerationCog(commands.Cog):
                      f"({ctx.channel.id}) on {tbb.cur_time()}:\n\n"
             msg_log.append(header)
             try:
-                alerts = self.bot.get_channel(alert_id) or await self.bot.fetch_channel(alert_id)
+                alerts = self.bot.get_channel(alert_channel) or await self.bot.fetch_channel(alert_channel)
             except (HTTPException, NotFound, Forbidden):
                 await ctx.send("Could not retrieve alerts channel.")
                 return

@@ -508,11 +508,15 @@ class CoreFunctionalityCog(commands.Cog):
                 await ctx.send("No configuration options are set.")
                 return
             response = "\n".join([f"{key}: {value}" for key, value in self.bot.config.items()])
-            await ctx.send(f"```{tbb.clean(ctx, response)}```")
+            response = tbb.clean(ctx, response, False).replace('`', 'ˋ')
+            await ctx.send(f"```{response}```")
         elif option.lower() in self.bot.config:
-            await ctx.send(f"Option: `{tbb.clean(ctx, option)}`, value: `{tbb.clean(ctx, self.bot.config[option])}`")
+            option = tbb.clean(ctx, option).replace('`', '\\`')
+            value = tbb.clean(ctx, self.bot.config[option], False).replace('`', 'ˋ')
+            await ctx.send(f"Option: `{option}`, value: `{value}`")
         else:
-            await ctx.send(f"No configuration option `{tbb.clean(ctx, option)}` is set.")
+            option = tbb.clean(ctx, option).replace('`', 'ˋ')
+            await ctx.send(f"No configuration option `{tbb.clean(ctx, option, False)}` is set.")
 
     @commands.has_permissions(administrator=True)
     @config.command(name="set", usage="CONFIG_OPTION> <VALUE>")
@@ -529,8 +533,9 @@ class CoreFunctionalityCog(commands.Cog):
             async with self.bot.db.acquire() as conn:
                 await conn.execute("INSERT INTO config VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2",
                                    option, value)
-            await ctx.send(f"Configuration option `{tbb.clean(ctx, option)}` has been set to "
-                           f"`{tbb.clean(ctx, value)}`.")
+            option = tbb.clean(ctx, option, False).replace('`', 'ˋ')
+            value = tbb.clean(ctx, value, False).replace('`', 'ˋ')
+            await ctx.send(f"Configuration option `{option}` has been set to `{value}`.")
 
     @commands.has_permissions(administrator=True)
     @config.command(name="unset", usage="<CONFIG_OPTION> <VALUE>")
@@ -542,9 +547,11 @@ class CoreFunctionalityCog(commands.Cog):
             del self.bot.config[option]
             async with self.bot.db.acquire() as conn:
                 await conn.execute("DELETE FROM config WHERE key = $1", option)
-            await ctx.send(f"Configuration option `{tbb.clean(ctx, option)}` has been unset.")
+                option = tbb.clean(ctx, option, False).replace('`', 'ˋ')
+            await ctx.send(f"Configuration option `{option}` has been unset.")
         else:
-            await ctx.send(f"No configuration option `{tbb.clean(ctx, option)}` exists.")
+            option = tbb.clean(ctx, option, False).replace('`', 'ˋ')
+            await ctx.send(f"No configuration option `{option}` exists.")
 
     @commands.is_owner()
     @commands.command(name="shutdown", aliases=["goodbye", "goodnight"], usage="(TIME BEFORE SHUTDOWN)")

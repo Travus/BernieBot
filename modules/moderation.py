@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from io import StringIO
-from typing import Optional, List
+from typing import Dict, List, Optional
 
+import discord.utils
 from discord import Colour, Embed, File, Forbidden, HTTPException, Member, Message, NotFound, TextChannel
 from discord.ext import commands
 
@@ -19,6 +20,8 @@ def setup(bot: tbb.TravusBotBase):
                          ["Travus#8888", "118954681241174016"])
     bot.add_command_help(ModerationCog.purge, "Moderation", {"perms": ["Manage Messages"]},
                          ["50", "50 penguin_pen", "25 Travus#8888", "25 bot_room BernieBot#4328"])
+    bot.add_command_help(ModerationCog.mute, "moderation", {"perms": ["Manage Roles"]},
+                         ["Travus#8888", "Travus#8888 12h"])
 
 
 def teardown(bot: tbb.TravusBotBase):
@@ -34,6 +37,23 @@ class ModerationCog(commands.Cog):
     def __init__(self, bot: tbb.TravusBotBase):
         """Initialization function loading bot object for cog."""
         self.bot = bot
+        self.mutes: Dict[Member, Optional[datetime]] = {}
+
+        async def async_init(mutes_dict: Dict[Member, Optional[datetime]]):
+            """Runs the asynchronous part of the initialization."""
+            async with self.bot.db.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute("CREATE TABLE IF NOT EXISTS mutes(guild TEXT NOT NULL, muted_user TEXT "
+                                       "NOT NULL, until TIMESTAMP, PRIMARY KEY(guild, muted_user))")
+                mutes = await conn.fetch("SELECT * FROM mutes")
+            for mute in mutes:
+                guild = bot.get_guild(int(mute["guild"]))
+                if guild is not None:
+                    muted_user = guild.get_member(int(mute["muted_user"]))
+                    if muted_user:
+                        mutes_dict[muted_user] = mute["until"]
+
+        self.bot.loop.create_task(async_init(self.mutes))
 
     @staticmethod
     def usage() -> str:
@@ -143,3 +163,48 @@ class ModerationCog(commands.Cog):
             output = "".join(reversed(msg_log))
             await alerts.send(content=f"Deletion log by {ctx.author.mention} from {ctx.channel.name}:",
                               file=File(StringIO(output), filename="Deletion log.txt"))
+
+    @tbb.required_config(("mute_role", ))
+    @commands.guild_only()
+    @commands.has_permissions(manage_roles=True)
+    @commands.command(name="mute", usage="<USER> (DURATION)")
+    async def mute(self, ctx: commands.Context, user: Member, duration: Optional[str]):
+        """This command lets you mute a user for some period of time, or until unmuted. The mute duration should be
+        given as a duration such as `12h`, where `w` is weeks, `d` is days, `h` is hours, `m` is minutes and `s` is
+        seconds. More than 1 type of time can be supplied as such; `1d12h`. The bot checks every minute if a mute has
+        expired, and unmutes if that is the case. Newer mutes overwrite older ones, and the `unmute` command cancels
+        mutes outright."""
+        if ctx.author.top_role <= user.top_role and ctx.author != ctx.guild.owner:
+            await ctx.send("You can only mute members below you in the role hierarchy.")
+            return
+
+        try:
+            mute_role = int(self.bot.config["mute_role"])
+        except ValueError:
+            raise ValueError(f"Invalid config for 'mute_role', should be int:  {self.bot.config['mute_role']}")
+        mute_role = discord.utils.get(ctx.guild.roles, id=mute_role)
+        if mute_role is None:
+            await ctx.send("Could not retrieve mute role.")
+
+        if duration:
+            try:
+                duration = datetime.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
+            except ValueError:
+                await ctx.send("Invalid duration. Must be valid duration and at least 1 second.")
+                return
+        try:
+            await user.add_roles(mute_role)
+        except Forbidden:
+            await ctx.send("Lacking permission to assign mute role.")
+            return
+        self.mutes[user] = duration
+        async with self.bot.db.acquire() as conn:
+            await conn.execute("INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) "
+                               "DO UPDATE SET until = $3", str(ctx.guild.id), str(user.id), duration)
+
+        embed = Embed(colour=Colour(0x4a4a4a), description=f"{user.mention} was{' temporarily' if duration else ''} "
+                                                           f"muted by {ctx.author.mention}!",
+                      timestamp=(duration if duration else datetime.utcnow()))
+        embed.set_author(name="Mute")
+        embed.set_footer(text=("Muted Until" if duration else "Muted On"), icon_url=user.avatar_url)
+        await ctx.send(embed=embed)

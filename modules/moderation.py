@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 
 import discord.utils
 from discord import Colour, Embed, File, Forbidden, HTTPException, Member, Message, NotFound, TextChannel
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import travus_bot_base as tbb
 
@@ -54,6 +54,11 @@ class ModerationCog(commands.Cog):
                         mutes_dict[muted_user] = mute["until"]
 
         self.bot.loop.create_task(async_init(self.mutes))
+        self.auto_unmuter.start()
+
+    def cog_unload(self):
+        """Function that stops the task when the cog unloads."""
+        self.auto_unmuter.cancel()
 
     @staticmethod
     def usage() -> str:
@@ -61,6 +66,36 @@ class ModerationCog(commands.Cog):
         return ("**How To Use The Moderation Module:**\nThis module is meant for use by moderators. It has features "
                 "such as muting users, seeing user information, mass deleting messages, and more. For information on "
                 "how to use the commands in this module, check their respective help entries.")
+
+    @tasks.loop(seconds=15)
+    async def auto_unmuter(self):
+        if not self.bot.is_connected:
+            return
+
+        for member, expiry in list(self.mutes.items()):
+            if expiry is None:
+                continue
+            if expiry <= datetime.utcnow():
+                try:
+                    mute_role_id = int(self.bot.config["mute_role"])
+                    mute_role = discord.utils.get(member.guild.roles, id=mute_role_id)
+                except ValueError:
+                    self.bot.log.warning(f"Could not convert {self.bot.config['mute_role']} to int")
+                    continue
+                if mute_role is None:
+                    self.bot.log.warning(f"Could not retrieve mute role {mute_role_id}.")
+                try:
+                    await member.remove_roles(mute_role)
+                except Forbidden:
+                    self.bot.log.warning(f"Could not unmute {member.name} in {member.guild.name}, missing permission.")
+                    continue
+                except HTTPException as e:
+                    self.bot.log.warning(f"Failed to unmute {member.name}: {e}")
+                    continue
+                del self.mutes[member]
+                async with self.bot.db.acquire() as conn:
+                    await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
+                                       str(member.guild.id), str(member.id))
 
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)

@@ -221,6 +221,13 @@ class ModerationCog(commands.Cog):
         if mute_role is None:
             await ctx.send("Could not retrieve mute role.")
 
+        alert_channel = None
+        if "alert_channel" in self.bot.config:
+            try:
+                alert_channel = int(self.bot.config["alert_channel"])
+            except ValueError:
+                pass
+
         if duration:
             try:
                 duration = datetime.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
@@ -243,3 +250,9 @@ class ModerationCog(commands.Cog):
         embed.set_author(name="Mute")
         embed.set_footer(text=("Muted Until" if duration else "Muted On"), icon_url=user.avatar_url)
         await ctx.send(embed=embed)
+        if alert_channel and alert_channel != ctx.channel.id:
+            try:
+                alerts = self.bot.get_channel(alert_channel) or await self.bot.fetch_channel(alert_channel)
+            except (HTTPException, NotFound, Forbidden):
+                return
+            await alerts.send(embed=embed)

@@ -68,6 +68,38 @@ class ModerationCog(commands.Cog):
                 "such as muting users, seeing user information, mass deleting messages, and more. For information on "
                 "how to use the commands in this module, check their respective help entries.")
 
+    @commands.Cog.listener()
+    async def on_member_join(self, member: Member):
+        """Function that checks if joining members are supposed to be muted, to prevent re-joining to evade mutes."""
+        if (member.guild.id, member.id) not in self.mutes:
+            return
+
+        try:
+            mute_role = int(self.bot.config["mute_role"])
+        except (ValueError, KeyError):
+            return
+        mute_role = member.guild.get_role(mute_role)
+        if mute_role is None:
+            return
+
+        try:
+            alert_channel = int(self.bot.config["alert_channel"])
+            alert_channel = self.bot.get_channel(alert_channel)
+        except (ValueError, KeyError):
+            alert_channel = None
+
+        success = True
+        try:
+            await member.add_roles(mute_role)
+        except (Forbidden, HTTPException):
+            success = False
+
+        if alert_channel:
+            if success:
+                await alert_channel.send(f"{member.mention} re-joined while muted! Re-muted user.")
+            else:
+                await alert_channel.send(f"{member.mention} re-joined while muted! **Failed to re-mute user!**")
+
     @tasks.loop(seconds=15)
     async def auto_unmuter(self):
         """Function that checks if any mutes have expired every 15 seconds, and unmutes if they are."""

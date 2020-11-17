@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from io import StringIO
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import discord.utils
 from discord import Colour, Embed, File, Forbidden, HTTPException, Member, Message, NotFound, TextChannel
@@ -37,9 +37,9 @@ class ModerationCog(commands.Cog):
     def __init__(self, bot: tbb.TravusBotBase):
         """Initialization function loading bot object for cog."""
         self.bot = bot
-        self.mutes: Dict[Member, Optional[datetime]] = {}
+        self.mutes: Dict[Tuple[int, int], Optional[datetime]] = {}
 
-        async def async_init(mutes_dict: Dict[Member, Optional[datetime]]):
+        async def async_init(mutes_dict: Dict[Tuple[int, int], Optional[datetime]]):
             """Runs the asynchronous part of the initialization."""
             async with self.bot.db.acquire() as conn:
                 async with conn.transaction():
@@ -47,11 +47,12 @@ class ModerationCog(commands.Cog):
                                        "NOT NULL, until TIMESTAMP, PRIMARY KEY(guild, muted_user))")
                 mutes = await conn.fetch("SELECT * FROM mutes")
             for mute in mutes:
-                guild = bot.get_guild(int(mute["guild"]))
-                if guild is not None:
-                    muted_user = guild.get_member(int(mute["muted_user"]))
-                    if muted_user:
-                        mutes_dict[muted_user] = mute["until"]
+                try:
+                    guild = int(mute["guild"])
+                    muted_user = int(mute["muted_user"])
+                    mutes_dict[(guild, muted_user)] = mute["until"]
+                except ValueError:
+                    continue
 
         self.bot.loop.create_task(async_init(self.mutes))
         self.auto_unmuter.start()
@@ -69,33 +70,55 @@ class ModerationCog(commands.Cog):
 
     @tasks.loop(seconds=15)
     async def auto_unmuter(self):
+        """Function that checks if any mutes have expired every 15 seconds, and unmutes if they are."""
         if not self.bot.is_connected:
             return
 
-        for member, expiry in list(self.mutes.items()):
-            if expiry is None:
+        alert_channel = None
+        if self.mutes:
+            try:
+                alert_channel = int(self.bot.config["alert_channel"])
+                alert_channel = self.bot.get_channel(alert_channel)
+            except (ValueError, KeyError):
+                alert_channel = None
+
+        for (guild_id, member_id), expiry in [((g, m), e) for (g, m), e in self.mutes.items()]:  # Loop over copy.
+            if expiry is None or expiry > datetime.utcnow():
                 continue
-            if expiry <= datetime.utcnow():
-                try:
-                    mute_role_id = int(self.bot.config["mute_role"])
-                    mute_role = discord.utils.get(member.guild.roles, id=mute_role_id)
-                except ValueError:
-                    self.bot.log.warning(f"Could not convert {self.bot.config['mute_role']} to int")
-                    continue
-                if mute_role is None:
-                    self.bot.log.warning(f"Could not retrieve mute role {mute_role_id}.")
-                try:
-                    await member.remove_roles(mute_role)
-                except Forbidden:
-                    self.bot.log.warning(f"Could not unmute {member.name} in {member.guild.name}, missing permission.")
-                    continue
-                except HTTPException as e:
-                    self.bot.log.warning(f"Failed to unmute {member.name}: {e}")
-                    continue
-                del self.mutes[member]
-                async with self.bot.db.acquire() as conn:
-                    await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
-                                       str(member.guild.id), str(member.id))
+            guild = self.bot.get_guild(guild_id)
+            member = guild.get_member(member_id)
+            if guild is None or member is None:
+                self.bot.log.warning(f"Could not retrieve member {member_id} from guild {guild_id}.")
+                continue
+
+            try:
+                mute_role_id = int(self.bot.config["mute_role"])
+                mute_role = guild.get_role(mute_role_id)
+            except ValueError:
+                self.bot.log.warning(f"Could not convert {self.bot.config['mute_role']} to int")
+                continue
+            if mute_role is None:
+                self.bot.log.warning(f"Could not retrieve mute role {mute_role_id}.")
+                continue
+
+            try:
+                await member.remove_roles(mute_role)
+            except Forbidden:
+                self.bot.log.warning(f"Could not unmute {member.name} in {member.guild.name}, missing permission.")
+                if alert_channel:
+                    await alert_channel.send(f"Mute of {member.mention} expired. **Lacking permission to unmute!**")
+                continue
+            except HTTPException as e:
+                self.bot.log.warning(f"Failed to unmute {member.name}: {e}")
+                if alert_channel:
+                    await alert_channel.send(f"Mute of {member.mention} expired. **Failed to unmute!**")
+                continue
+            del self.mutes[(guild.id, member.id)]
+            async with self.bot.db.acquire() as conn:
+                await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
+                                   str(guild.id), str(member.id))
+            if alert_channel:
+                await alert_channel.send(f"Mute of {member.mention} expired. User unmuted.")
 
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
@@ -239,10 +262,10 @@ class ModerationCog(commands.Cog):
         except Forbidden:
             await ctx.send("Lacking permission to assign mute role.")
             return
-        self.mutes[user] = duration
+        self.mutes[(user.guild.id, user.id)] = duration
         async with self.bot.db.acquire() as conn:
             await conn.execute("INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) "
-                               "DO UPDATE SET until = $3", str(ctx.guild.id), str(user.id), duration)
+                               "DO UPDATE SET until = $3", str(user.guild.id), str(user.id), duration)
 
         embed = Embed(colour=Colour(0x4a4a4a), description=f"{user.mention} was{' temporarily' if duration else ''} "
                                                            f"muted by {ctx.author.mention}!",

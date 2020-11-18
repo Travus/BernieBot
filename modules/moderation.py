@@ -1,3 +1,4 @@
+from asyncio import Lock
 from datetime import datetime, timedelta
 from io import StringIO
 from typing import Dict, List, Optional, Tuple
@@ -22,6 +23,7 @@ def setup(bot: tbb.TravusBotBase):
                          ["50", "50 penguin_pen", "25 Travus#8888", "25 bot_room BernieBot#4328"])
     bot.add_command_help(ModerationCog.mute, "Moderation", {"perms": ["Manage Roles"]},
                          ["Travus#8888", "Travus#8888 12h"])
+    bot.add_command_help(ModerationCog.unmute, "Moderation", {"perms": ["Manage Roles"]}, ["Travus#8888"])
 
 
 def teardown(bot: tbb.TravusBotBase):
@@ -38,6 +40,7 @@ class ModerationCog(commands.Cog):
         """Initialization function loading bot object for cog."""
         self.bot = bot
         self.mutes: Dict[Tuple[int, int], Optional[datetime]] = {}
+        self.mute_lock: Lock = Lock()
 
         async def async_init(mutes_dict: Dict[Tuple[int, int], Optional[datetime]]):
             """Runs the asynchronous part of the initialization."""
@@ -46,13 +49,14 @@ class ModerationCog(commands.Cog):
                     await conn.execute("CREATE TABLE IF NOT EXISTS mutes(guild TEXT NOT NULL, muted_user TEXT "
                                        "NOT NULL, until TIMESTAMP, PRIMARY KEY(guild, muted_user))")
                 mutes = await conn.fetch("SELECT * FROM mutes")
-            for mute in mutes:
-                try:
-                    guild = int(mute["guild"])
-                    muted_user = int(mute["muted_user"])
-                    mutes_dict[(guild, muted_user)] = mute["until"]
-                except ValueError:
-                    continue
+            async with self.mute_lock:
+                for mute in mutes:
+                    try:
+                        guild = int(mute["guild"])
+                        muted_user = int(mute["muted_user"])
+                        mutes_dict[(guild, muted_user)] = mute["until"]
+                    except ValueError:
+                        continue
 
         self.bot.loop.create_task(async_init(self.mutes))
         self.auto_unmuter.start()
@@ -127,39 +131,40 @@ class ModerationCog(commands.Cog):
 
         alert_channel = self._get_alert_channel()
 
-        for (guild_id, member_id), expiry in [((g, m), e) for (g, m), e in self.mutes.items()]:  # Loop over copy.
-            if expiry is None or expiry > datetime.utcnow():
-                continue
-            guild = self.bot.get_guild(guild_id)
-            member = guild.get_member(member_id)
-            if guild is None or member is None:
-                self.bot.log.warning(f"Could not retrieve member {member_id} from guild {guild_id}.")
-                continue
+        async with self.mute_lock:
+            for (guild_id, member_id), expiry in [((g, m), e) for (g, m), e in self.mutes.items()]:  # Loop over copy.
+                if expiry is None or expiry > datetime.utcnow():
+                    continue
+                guild = self.bot.get_guild(guild_id)
+                member = guild.get_member(member_id)
+                if guild is None or member is None:
+                    self.bot.log.warning(f"Could not retrieve member {member_id} from guild {guild_id}.")
+                    continue
 
-            mute_role = self._get_mute_role(member)
-            if mute_role is None:
-                if "mute_role" in self.bot.config:
-                    self.bot.log.warning(f"Could not retrieve mute role {self.bot.config['mute_role']}.")
-                continue
+                mute_role = self._get_mute_role(member)
+                if mute_role is None:
+                    if "mute_role" in self.bot.config:
+                        self.bot.log.warning(f"Could not retrieve mute role {self.bot.config['mute_role']}.")
+                    continue
 
-            try:
-                await member.remove_roles(mute_role)
-            except Forbidden:
-                self.bot.log.warning(f"Could not unmute {member.name} in {member.guild.name}, missing permission.")
+                try:
+                    await member.remove_roles(mute_role)
+                except Forbidden:
+                    self.bot.log.warning(f"Could not unmute {member.name} in {member.guild.name}, missing permission.")
+                    if alert_channel:
+                        await alert_channel.send(f"Mute of {member.mention} expired. **Lacking permission to unmute!**")
+                    continue
+                except HTTPException as e:
+                    self.bot.log.warning(f"Failed to unmute {member.name}: {e}")
+                    if alert_channel:
+                        await alert_channel.send(f"Mute of {member.mention} expired. **Failed to unmute!**")
+                    continue
+                del self.mutes[(guild.id, member.id)]
+                async with self.bot.db.acquire() as conn:
+                    await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
+                                       str(guild.id), str(member.id))
                 if alert_channel:
-                    await alert_channel.send(f"Mute of {member.mention} expired. **Lacking permission to unmute!**")
-                continue
-            except HTTPException as e:
-                self.bot.log.warning(f"Failed to unmute {member.name}: {e}")
-                if alert_channel:
-                    await alert_channel.send(f"Mute of {member.mention} expired. **Failed to unmute!**")
-                continue
-            del self.mutes[(guild.id, member.id)]
-            async with self.bot.db.acquire() as conn:
-                await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
-                                   str(guild.id), str(member.id))
-            if alert_channel:
-                await alert_channel.send(f"Mute of {member.mention} expired. User unmuted.")
+                    await alert_channel.send(f"Mute of {member.mention} expired. User unmuted.")
 
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
@@ -288,7 +293,8 @@ class ModerationCog(commands.Cog):
         except Forbidden:
             await ctx.send("Lacking permission to assign mute role.")
             return
-        self.mutes[(user.guild.id, user.id)] = duration
+        async with self.mute_lock:
+            self.mutes[(user.guild.id, user.id)] = duration
         async with self.bot.db.acquire() as conn:
             await conn.execute("INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) "
                                "DO UPDATE SET until = $3", str(user.guild.id), str(user.id), duration)

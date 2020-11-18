@@ -266,17 +266,17 @@ class ModerationCog(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(manage_roles=True)
     @commands.command(name="mute", usage="<USER> (DURATION)")
-    async def mute(self, ctx: commands.Context, user: Member, duration: Optional[str]):
+    async def mute(self, ctx: commands.Context, member: Member, duration: Optional[str]):
         """This command lets you mute a user for some period of time, or until unmuted. The mute duration should be
         given as a duration such as `12h`, where `w` is weeks, `d` is days, `h` is hours, `m` is minutes and `s` is
         seconds. More than 1 type of time can be supplied as such; `1d12h`. The bot checks every minute if a mute has
         expired, and unmutes if that is the case. Newer mutes overwrite older ones, and the `unmute` command cancels
         mutes outright."""
-        if ctx.author.top_role <= user.top_role and ctx.author != ctx.guild.owner:
+        if ctx.author.top_role <= member.top_role and ctx.author != ctx.guild.owner:
             await ctx.send("You can only mute members below you in the role hierarchy.")
             return
 
-        mute_role = self._get_mute_role(user)
+        mute_role = self._get_mute_role(member)
         if mute_role is None:
             await ctx.send(f"Could not retrieve mute role: {self.bot.config['mute_role']}")
             return
@@ -289,21 +289,55 @@ class ModerationCog(commands.Cog):
                 await ctx.send("Invalid duration. Must be valid duration and at least 1 second.")
                 return
         try:
-            await user.add_roles(mute_role)
+            await member.add_roles(mute_role)
         except Forbidden:
             await ctx.send("Lacking permission to assign mute role.")
             return
         async with self.mute_lock:
-            self.mutes[(user.guild.id, user.id)] = duration
+            self.mutes[(member.guild.id, member.id)] = duration
         async with self.bot.db.acquire() as conn:
             await conn.execute("INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) "
-                               "DO UPDATE SET until = $3", str(user.guild.id), str(user.id), duration)
+                               "DO UPDATE SET until = $3", str(member.guild.id), str(member.id), duration)
 
-        embed = Embed(colour=Colour(0x4a4a4a), description=f"{user.mention} was{' temporarily' if duration else ''} "
+        embed = Embed(colour=Colour(0x4a4a4a), description=f"{member.mention} was{' temporarily' if duration else ''} "
                                                            f"muted by {ctx.author.mention}!",
                       timestamp=(duration if duration else datetime.utcnow()))
         embed.set_author(name="Mute")
-        embed.set_footer(text=("Muted Until" if duration else "Muted On"), icon_url=user.avatar_url)
+        embed.set_footer(text=("Muted Until" if duration else "Muted On"), icon_url=member.avatar_url)
+        await ctx.send(embed=embed)
+        if alert_channel and alert_channel != ctx.channel.id:
+            await alert_channel.send(embed=embed)
+
+    @tbb.required_config(("mute_role",))
+    @commands.guild_only()
+    @commands.has_permissions(manage_roles=True)
+    @commands.command(name="unmute", usage="<USER>")
+    async def unmute(self, ctx: commands.Context, member: Member):
+        """This command lets you unmute a user. Unmuting a user will lift both temporary and permanent mutes."""
+        if ctx.author.top_role <= member.top_role and ctx.author != ctx.guild.owner:
+            await ctx.send("You can only unmute members below you in the role hierarchy.")
+            return
+
+        mute_role = self._get_mute_role(member)
+        if mute_role is None:
+            await ctx.send(f"Could not retrieve mute role: {self.bot.config['mute_role']}")
+            return
+        alert_channel = self._get_alert_channel()
+
+        if (member.guild.id, member.id) not in self.mutes:
+            await ctx.send("This user is not muted.")
+            return
+        try:
+            await member.remove_roles(mute_role)
+        except Forbidden:
+            await ctx.send("Lacking permission to unmute.")
+            return
+        async with self.mute_lock:
+            del self.mutes[(member.guild.id, member.id)]
+        embed = Embed(colour=Colour(0x4a4a4a), description=f"{member.mention} was unmuted by {ctx.author.mention}!",
+                      timestamp=datetime.utcnow())
+        embed.set_author(name="Unmute")
+        embed.set_footer(text="Unmuted On", icon_url=member.avatar_url)
         await ctx.send(embed=embed)
         if alert_channel and alert_channel != ctx.channel.id:
             await alert_channel.send(embed=embed)

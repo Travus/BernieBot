@@ -169,13 +169,8 @@ class ModerationCog(commands.Cog):
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
     @commands.command(name="whois", usage="<USER>")
-    async def whois(self, ctx: commands.Context, user):
+    async def whois(self, ctx: commands.Context, user: Member):
         """Supplies information about a user on the server, such as join date, registration date, ID and similar."""
-        try:
-            user = await commands.MemberConverter().convert(ctx, user)
-        except commands.BadArgument:
-            await ctx.send("Could not find matching member.")
-            return
         join_position = sorted(ctx.guild.members, key=lambda mem: mem.joined_at).index(user) + 1
         boost_date = None if user.premium_since is None else user.premium_since.strftime('%a, %b %d, %Y %I:%M %p')
         if boost_date is not None:
@@ -194,9 +189,16 @@ class ModerationCog(commands.Cog):
         embed.set_thumbnail(url=user.avatar_url)
         embed.set_author(name=str(user), icon_url=user.avatar_url)
         embed.set_footer(text=ctx.author.name, icon_url=ctx.author.avatar_url)
+        try:
+            if self.mutes[(ctx.guild.id, user.id)] is None:
+                muted = "Yes"
+            else:
+                muted = f"Until {self.mutes[(ctx.guild.id, user.id)].strftime('%b %d, %Y %I:%M %p UTC')}"
+        except KeyError:
+            muted = "No"
         embed.add_field(name="Information", value=f"**Name**: {user}\n**Nickname:**: {user.nick}\n**ID:** {user.id}\n"
                                                   f"**Profile Picture:** [Link]({user.avatar_url})\n"
-                                                  f"**Status:** {user.status}\n**Bot:** "
+                                                  f"**Status:** {user.status}\n**Muted:** {muted}\n**Bot:** "
                                                   f"{'Yes' if user.bot else 'No'}\n", inline=False)
         embed.add_field(name="Dates", value=f"**Registered:** {user.created_at.strftime('%a, %b %d, %Y %I:%M %p')}\n"
                                             f"**Joined:** {user.joined_at.strftime('%a, %b %d, %Y %I:%M %p')}\n"

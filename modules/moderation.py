@@ -271,8 +271,8 @@ class ModerationCog(commands.Cog):
     async def mute(self, ctx: commands.Context, member: Member, duration: Optional[str]):
         """This command lets you mute a user for some period of time, or until unmuted. The mute duration should be
         given as a duration such as `12h`, where `w` is weeks, `d` is days, `h` is hours, `m` is minutes and `s` is
-        seconds. More than 1 type of time can be supplied as such; `1d12h`. The bot checks every minute if a mute has
-        expired, and unmutes if that is the case. Newer mutes overwrite older ones, and the `unmute` command cancels
+        seconds. More than 1 type of time can be supplied as such; `1d12h`. The bot checks every 15 seconds if a mute
+        has expired, and unmutes if that is the case. Newer mutes overwrite older ones, and the `unmute` command cancels
         mutes outright."""
         if ctx.author.top_role <= member.top_role and ctx.author != ctx.guild.owner:
             await ctx.send("You can only mute members below you in the role hierarchy.")

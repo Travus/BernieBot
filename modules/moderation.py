@@ -20,7 +20,7 @@ def setup(bot: tbb.TravusBotBase):
                          ["Travus#8888", "118954681241174016"])
     bot.add_command_help(ModerationCog.purge, "Moderation", {"perms": ["Manage Messages"]},
                          ["50", "50 penguin_pen", "25 Travus#8888", "25 bot_room BernieBot#4328"])
-    bot.add_command_help(ModerationCog.mute, "moderation", {"perms": ["Manage Roles"]},
+    bot.add_command_help(ModerationCog.mute, "Moderation", {"perms": ["Manage Roles"]},
                          ["Travus#8888", "Travus#8888 12h"])
 
 
@@ -61,6 +61,34 @@ class ModerationCog(commands.Cog):
         """Function that stops the task when the cog unloads."""
         self.auto_unmuter.cancel()
 
+    def _get_mute_role(self, member: Member) -> Optional[discord.Role]:
+        """Returns the alarm role set in the config, if there is one. Otherwise returns None."""
+        if "mute_role" not in self.bot.config:
+            return None
+        try:
+            mute_role = int(self.bot.config["mute_role"])
+            mute_role = member.guild.get_role(mute_role)
+            return mute_role
+        except ValueError:
+            self.bot.log.warning(f"Invalid config for 'mute_role', should be int:  {self.bot.config['mute_role']}")
+            self.bot.last_error = f"Invalid config for 'mute_role', should be int:  {self.bot.config['mute_role']}"
+            return None
+
+    def _get_alert_channel(self) -> Optional[TextChannel]:
+        """Return the alarm channel set in te config, if there is one. Otherwise returns None."""
+        if "alert_channel" not in self.bot.config:
+            return None
+        try:
+            alert_channel = int(self.bot.config["alert_channel"])
+            alert_channel = self.bot.get_channel(alert_channel)
+            return alert_channel
+        except ValueError:
+            self.bot.log.warning(f"Invalid config for 'alert_channel', should be int: "
+                                 f"{self.bot.config['alert_channel']}")
+            self.bot.last_error = (f"Invalid config for 'alert_channel', should be int: "
+                                   f"{self.bot.config['alert_channel']}")
+            return None
+
     @staticmethod
     def usage() -> str:
         """Returns the usage text."""
@@ -74,19 +102,10 @@ class ModerationCog(commands.Cog):
         if (member.guild.id, member.id) not in self.mutes:
             return
 
-        try:
-            mute_role = int(self.bot.config["mute_role"])
-        except (ValueError, KeyError):
-            return
-        mute_role = member.guild.get_role(mute_role)
+        mute_role = self._get_mute_role(member)
         if mute_role is None:
             return
-
-        try:
-            alert_channel = int(self.bot.config["alert_channel"])
-            alert_channel = self.bot.get_channel(alert_channel)
-        except (ValueError, KeyError):
-            alert_channel = None
+        alert_channel = self._get_alert_channel()
 
         success = True
         try:
@@ -106,13 +125,7 @@ class ModerationCog(commands.Cog):
         if not self.bot.is_connected:
             return
 
-        alert_channel = None
-        if self.mutes:
-            try:
-                alert_channel = int(self.bot.config["alert_channel"])
-                alert_channel = self.bot.get_channel(alert_channel)
-            except (ValueError, KeyError):
-                alert_channel = None
+        alert_channel = self._get_alert_channel()
 
         for (guild_id, member_id), expiry in [((g, m), e) for (g, m), e in self.mutes.items()]:  # Loop over copy.
             if expiry is None or expiry > datetime.utcnow():
@@ -123,14 +136,10 @@ class ModerationCog(commands.Cog):
                 self.bot.log.warning(f"Could not retrieve member {member_id} from guild {guild_id}.")
                 continue
 
-            try:
-                mute_role_id = int(self.bot.config["mute_role"])
-                mute_role = guild.get_role(mute_role_id)
-            except ValueError:
-                self.bot.log.warning(f"Could not convert {self.bot.config['mute_role']} to int")
-                continue
+            mute_role = self._get_mute_role(member)
             if mute_role is None:
-                self.bot.log.warning(f"Could not retrieve mute role {mute_role_id}.")
+                if "mute_role" in self.bot.config:
+                    self.bot.log.warning(f"Could not retrieve mute role {self.bot.config['mute_role']}.")
                 continue
 
             try:
@@ -209,10 +218,7 @@ class ModerationCog(commands.Cog):
         def check_user(message: Message) -> bool:
             return message.author == user
 
-        try:
-            alert_channel = int(self.bot.config["alert_channel"])
-        except ValueError:
-            raise ValueError(f"Invalid config for 'alert_channel', should be int:  {self.bot.config['alert_channel']}")
+        alert_channel = self._get_alert_channel()
 
         channel = channel or ctx.channel
         if channel.guild != ctx.guild:
@@ -245,14 +251,11 @@ class ModerationCog(commands.Cog):
             header = f"Messages deleted by {ctx.author.name} ({ctx.author.id}) in {ctx.channel.name} " \
                      f"({ctx.channel.id}) on {tbb.cur_time()}:\n\n"
             msg_log.append(header)
-            try:
-                alerts = self.bot.get_channel(alert_channel) or await self.bot.fetch_channel(alert_channel)
-            except (HTTPException, NotFound, Forbidden):
-                await ctx.send("Could not retrieve alerts channel.")
+            if alert_channel is None:
                 return
             output = "".join(reversed(msg_log))
-            await alerts.send(content=f"Deletion log by {ctx.author.mention} from {ctx.channel.name}:",
-                              file=File(StringIO(output), filename="Deletion log.txt"))
+            await alert_channel.send(content=f"Deletion log by {ctx.author.mention} from {ctx.channel.name}:",
+                                     file=File(StringIO(output), filename="Deletion log.txt"))
 
     @tbb.required_config(("mute_role", ))
     @commands.guild_only()
@@ -268,20 +271,11 @@ class ModerationCog(commands.Cog):
             await ctx.send("You can only mute members below you in the role hierarchy.")
             return
 
-        try:
-            mute_role = int(self.bot.config["mute_role"])
-        except ValueError:
-            raise ValueError(f"Invalid config for 'mute_role', should be int:  {self.bot.config['mute_role']}")
-        mute_role = discord.utils.get(ctx.guild.roles, id=mute_role)
+        mute_role = self._get_mute_role(user)
         if mute_role is None:
-            await ctx.send("Could not retrieve mute role.")
-
-        alert_channel = None
-        if "alert_channel" in self.bot.config:
-            try:
-                alert_channel = int(self.bot.config["alert_channel"])
-            except ValueError:
-                pass
+            await ctx.send(f"Could not retrieve mute role: {self.bot.config['mute_role']}")
+            return
+        alert_channel = self._get_alert_channel()
 
         if duration:
             try:
@@ -306,8 +300,4 @@ class ModerationCog(commands.Cog):
         embed.set_footer(text=("Muted Until" if duration else "Muted On"), icon_url=user.avatar_url)
         await ctx.send(embed=embed)
         if alert_channel and alert_channel != ctx.channel.id:
-            try:
-                alerts = self.bot.get_channel(alert_channel) or await self.bot.fetch_channel(alert_channel)
-            except (HTTPException, NotFound, Forbidden):
-                return
-            await alerts.send(embed=embed)
+            await alert_channel.send(embed=embed)

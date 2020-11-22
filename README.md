@@ -3,8 +3,7 @@ This is BernieBot, the custom bot used in the Official NicoB Discord server. The
 The bot is currently in development.
 
 ### ToDo
-- servers and server info command
-- user count command
+- affiliated server command(s)
 - modular role commands
 - RT system, with anonymity function
 - strike (warning) function

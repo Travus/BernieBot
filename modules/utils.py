@@ -14,6 +14,7 @@ def setup(bot: tbb.TravusBotBase):
                    reminders, etc. There commands are meant for use by both regular users and moderators and the
                    commands are intended to provide some value, opposed to just give fun responses.""")
     bot.add_command_help(UtilsCog.usercount, "Utility", None, [""])
+    bot.add_command_help(UtilsCog.guildinfo, "Utility", None, [""])
 
 
 def teardown(bot: tbb.TravusBotBase):
@@ -55,4 +56,33 @@ class UtilsCog(commands.Cog):
         embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.avatar_url)
         embed.add_field(name="Members", value=f"{members}", inline=True)
         embed.add_field(name="Bots", value=f"{bots}", inline=True)
+        await ctx.send(embed=embed)
+
+    @commands.guild_only()
+    @commands.command(name="serverinfo", aliases=["guildinfo"])
+    async def guildinfo(self, ctx: commands.Context):
+        """This command lets you see the server information of the current server. It returns various statistics such
+        as id, owner, member count, boost state, and more."""
+        members = 0
+        bots = 0
+        for member in ctx.guild.members:
+            if not member.bot:
+                members += 1
+            else:
+                bots += 1
+        creation_time = ctx.guild.created_at.strftime('%b %d, %Y %I:%M %p UTC')
+
+        embed = discord.Embed(colour=discord.Color(0x4a4a4a), timestamp=datetime.utcnow())
+        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon_url)
+        embed.set_thumbnail(url=ctx.guild.icon_url)
+        embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.avatar_url)
+        embed.add_field(name="Information", value=f"**Server ID**: {ctx.guild.id}\n"
+                                                  f"**Server Owner**: {ctx.guild.owner.mention}\n"
+                                                  f"**Creation Time**: {creation_time}\n"
+                                                  f"**Boost Level**: {ctx.guild.premium_tier} "
+                                                  f"({ctx.guild.premium_subscription_count} boosts)", inline=False)
+        embed.add_field(name="Statistics", value=f"**Member Count**: {members} users, {bots} bots\n"
+                                                 f"**Text Channels**: {len(ctx.guild.text_channels)}\n"
+                                                 f"**Voice Channels**: {len(ctx.guild.voice_channels)}\n"
+                                                 f"**Roles**: {len(ctx.guild.roles)}", inline=False)
         await ctx.send(embed=embed)

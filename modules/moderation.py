@@ -297,9 +297,9 @@ class ModerationCog(commands.Cog):
             return
         async with self.mute_lock:
             self.mutes[(member.guild.id, member.id)] = duration
-        async with self.bot.db.acquire() as conn:
-            await conn.execute("INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) "
-                               "DO UPDATE SET until = $3", str(member.guild.id), str(member.id), duration)
+            async with self.bot.db.acquire() as conn:
+                await conn.execute("INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) "
+                                   "DO UPDATE SET until = $3", str(member.guild.id), str(member.id), duration)
 
         embed = Embed(colour=Colour(0x4a4a4a), description=f"{member.mention} was{' temporarily' if duration else ''} "
                                                            f"muted by {ctx.author.mention}!",
@@ -336,9 +336,9 @@ class ModerationCog(commands.Cog):
             return
         async with self.mute_lock:
             del self.mutes[(member.guild.id, member.id)]
-        async with self.bot.db.acquire() as conn:
-            await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
-                               str(member.guild.id), str(member.id))
+            async with self.bot.db.acquire() as conn:
+                await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
+                                   str(member.guild.id), str(member.id))
         embed = Embed(colour=Colour(0x4a4a4a), description=f"{member.mention} was unmuted by {ctx.author.mention}!",
                       timestamp=datetime.utcnow())
         embed.set_author(name="Unmute")

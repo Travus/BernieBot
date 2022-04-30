@@ -1,6 +1,6 @@
 from asyncio import Lock
 from datetime import datetime, timedelta
-from io import StringIO
+from io import BytesIO
 from typing import Dict, List, Optional, Tuple
 
 import discord.utils
@@ -10,9 +10,23 @@ from discord.ext import commands, tasks
 import travus_bot_base as tbb
 
 
-def setup(bot: tbb.TravusBotBase):
+async def setup(bot: tbb.TravusBotBase):
     """Setup function ran when module is loaded."""
-    bot.add_cog(ModerationCog(bot))  # Add cog and command help info.
+    mutes_dict: Dict[Tuple[int, int], Optional[datetime]] = {}
+    async with bot.db.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("CREATE TABLE IF NOT EXISTS mutes(guild TEXT NOT NULL, muted_user TEXT "
+                               "NOT NULL, until TIMESTAMPTZ, PRIMARY KEY(guild, muted_user))")
+        mutes = await conn.fetch("SELECT * FROM mutes")
+        for mute in mutes:
+            try:
+                guild = int(mute["guild"])
+                muted_user = int(mute["muted_user"])
+                mutes_dict[(guild, muted_user)] = mute["until"]
+            except ValueError:
+                continue
+
+    await bot.add_cog(ModerationCog(bot, mutes_dict))  # Add cog and command help info.
     bot.add_module("Moderation", "[Travus](https://github.com/Travus):\n\tCommands", ModerationCog.usage,
                    """This module includes commands helpful for moderation, such as retrieving info about users,
                    mass-deleting messages, etc. This module is intended to be used by moderators, and as such the
@@ -26,9 +40,9 @@ def setup(bot: tbb.TravusBotBase):
     bot.add_command_help(ModerationCog.unmute, "Moderation", {"perms": ["Manage Roles"]}, ["Travus#8888"])
 
 
-def teardown(bot: tbb.TravusBotBase):
+async def teardown(bot: tbb.TravusBotBase):
     """Teardown function ran when module is unloaded."""
-    bot.remove_cog("ModerationCog")  # Remove cog and command help info.
+    await bot.remove_cog("ModerationCog")  # Remove cog and command help info.
     bot.remove_module("Moderation")
     bot.remove_command_help(ModerationCog)
 
@@ -36,29 +50,11 @@ def teardown(bot: tbb.TravusBotBase):
 class ModerationCog(commands.Cog):
     """Cog that holds moderation functionality."""
 
-    def __init__(self, bot: tbb.TravusBotBase):
+    def __init__(self, bot: tbb.TravusBotBase, mutes_dict: Dict[Tuple[int, int], Optional[datetime]]):
         """Initialization function loading bot object for cog."""
         self.bot = bot
-        self.mutes: Dict[Tuple[int, int], Optional[datetime]] = {}
+        self.mutes: Dict[Tuple[int, int], Optional[datetime]] = mutes_dict
         self.mute_lock: Lock = Lock()
-
-        async def async_init(mutes_dict: Dict[Tuple[int, int], Optional[datetime]]):
-            """Runs the asynchronous part of the initialization."""
-            async with self.bot.db.acquire() as conn:
-                async with conn.transaction():
-                    await conn.execute("CREATE TABLE IF NOT EXISTS mutes(guild TEXT NOT NULL, muted_user TEXT "
-                                       "NOT NULL, until TIMESTAMP, PRIMARY KEY(guild, muted_user))")
-                mutes = await conn.fetch("SELECT * FROM mutes")
-            async with self.mute_lock:
-                for mute in mutes:
-                    try:
-                        guild = int(mute["guild"])
-                        muted_user = int(mute["muted_user"])
-                        mutes_dict[(guild, muted_user)] = mute["until"]
-                    except ValueError:
-                        continue
-
-        self.bot.loop.create_task(async_init(self.mutes))
         self.auto_unmuter.start()
 
     def cog_unload(self):
@@ -133,7 +129,7 @@ class ModerationCog(commands.Cog):
 
         async with self.mute_lock:
             for (guild_id, member_id), expiry in [((g, m), e) for (g, m), e in self.mutes.items()]:  # Loop over copy.
-                if expiry is None or expiry > datetime.utcnow():
+                if expiry is None or expiry > discord.utils.utcnow():
                     continue
                 guild = self.bot.get_guild(guild_id)
                 member = guild.get_member(member_id)
@@ -178,17 +174,17 @@ class ModerationCog(commands.Cog):
         messages = 0
         last_message = None
         for channel in ctx.guild.text_channels:  # Count messages by user across all channels, remember newest.
-            if not channel.guild.me.permissions_in(channel).read_message_history:
+            if not channel.permissions_for(channel.guild.me).read_message_history:
                 continue
-            async for message in channel.history(limit=10000, after=datetime.utcnow() - timedelta(hours=12)):
+            async for message in channel.history(limit=10000, after=discord.utils.utcnow() - timedelta(hours=12)):
                 if message.author == user:
                     messages += 1
                     if last_message is None or message.created_at > last_message.created_at:
                         last_message = message
-        embed = Embed(colour=Colour(0x4a4a4a), description=f"**{user.mention}**", timestamp=datetime.utcnow())
-        embed.set_thumbnail(url=user.avatar_url)
-        embed.set_author(name=str(user), icon_url=user.avatar_url)
-        embed.set_footer(text=ctx.author.name, icon_url=ctx.author.avatar_url)
+        embed = Embed(colour=Colour(0x4a4a4a), description=f"**{user.mention}**", timestamp=discord.utils.utcnow())
+        embed.set_thumbnail(url=user.display_avatar)
+        embed.set_author(name=str(user), icon_url=user.display_avatar)
+        embed.set_footer(text=ctx.author.name, icon_url=ctx.author.display_avatar)
         try:
             if self.mutes[(ctx.guild.id, user.id)] is None:
                 muted = "Yes"
@@ -197,7 +193,7 @@ class ModerationCog(commands.Cog):
         except KeyError:
             muted = "No"
         embed.add_field(name="Information", value=f"**Name**: {user}\n**Nickname:**: {user.nick}\n**ID:** {user.id}\n"
-                                                  f"**Profile Picture:** [Link]({user.avatar_url})\n"
+                                                  f"**Profile Picture:** [Link]({user.display_avatar})\n"
                                                   f"**Status:** {user.status}\n**Muted:** {muted}\n**Bot:** "
                                                   f"{'Yes' if user.bot else 'No'}\n", inline=False)
         embed.add_field(name="Dates", value=f"**Registered:** {user.created_at.strftime('%a, %b %d, %Y %I:%M %p')}\n"
@@ -262,7 +258,7 @@ class ModerationCog(commands.Cog):
                 return
             output = "".join(reversed(msg_log))
             await alert_channel.send(content=f"Deletion log by {ctx.author.mention} from {ctx.channel.name}:",
-                                     file=File(StringIO(output), filename="Deletion log.txt"))
+                                     file=File(BytesIO(output.encode()), filename="Deletion log.txt"))
 
     @tbb.required_config(("mute_role", ))
     @commands.guild_only()
@@ -286,7 +282,7 @@ class ModerationCog(commands.Cog):
 
         if duration:
             try:
-                duration = datetime.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
+                duration = discord.utils.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
             except ValueError:
                 await ctx.send("Invalid duration. Must be valid duration and at least 1 second.")
                 return
@@ -303,9 +299,9 @@ class ModerationCog(commands.Cog):
 
         embed = Embed(colour=Colour(0x4a4a4a), description=f"{member.mention} was{' temporarily' if duration else ''} "
                                                            f"muted by {ctx.author.mention}!",
-                      timestamp=(duration if duration else datetime.utcnow()))
+                      timestamp=(duration if duration else discord.utils.utcnow()))
         embed.set_author(name="Mute")
-        embed.set_footer(text=("Muted Until" if duration else "Muted On"), icon_url=member.avatar_url)
+        embed.set_footer(text=("Muted Until" if duration else "Muted On"), icon_url=member.display_avatar)
         await ctx.send(embed=embed)
         if alert_channel and alert_channel != ctx.channel.id:
             await alert_channel.send(embed=embed)
@@ -340,9 +336,9 @@ class ModerationCog(commands.Cog):
                 await conn.execute("DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
                                    str(member.guild.id), str(member.id))
         embed = Embed(colour=Colour(0x4a4a4a), description=f"{member.mention} was unmuted by {ctx.author.mention}!",
-                      timestamp=datetime.utcnow())
+                      timestamp=discord.utils.utcnow())
         embed.set_author(name="Unmute")
-        embed.set_footer(text="Unmuted On", icon_url=member.avatar_url)
+        embed.set_footer(text="Unmuted On", icon_url=member.display_avatar)
         await ctx.send(embed=embed)
         if alert_channel and alert_channel != ctx.channel.id:
             await alert_channel.send(embed=embed)

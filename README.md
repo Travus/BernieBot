@@ -26,6 +26,5 @@ If you need to get in contact with me for any reason, feel free to send me a mes
 *BernieBot* is made my [Travus](https://github.com/Travus).  
 The [Travus Bot Base](https://github.com/Travus/Travus_Bot_Base) is made by [Travus](https://github.com/Travus).  
 [Discord.py](https://github.com/Rapptz/discord.py) is made by [Rapptz](https://github.com/Rapptz) and the other contributors to the project.  
-[asqlite](https://gist.github.com/Rapptz/c1ff9fc7dc15194f305eb13e6cb57de1) is made by [Rapptz](https://github.com/Rapptz).
 
 *BernieBot* is made under the [MIT License](LICENSE.md), meaning you are welcome to change, redistribute, and use it however you see fit. I am not liable for any problems you may encounter by using the bot base.

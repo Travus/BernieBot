@@ -9,9 +9,24 @@ from discord.ext import commands, tasks  # For implementation of bot commands.
 import travus_bot_base as tbb  # TBB functions and classes.
 
 
-def setup(bot: tbb.TravusBotBase):
+async def setup(bot: tbb.TravusBotBase):
     """Setup function ran when module is loaded."""
-    bot.add_cog(UtilsCog(bot))  # Add cog and command help info.
+    reminder_dict: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]] = {}
+    async with bot.db.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("CREATE TABLE IF NOT EXISTS reminders(guild TEXT, channel TEXT, reminding_user "
+                               "TEXT NOT NULL, until TIMESTAMPTZ NOT NULL, message TEXT NOT NULL)")
+        reminders = await conn.fetch("SELECT * FROM reminders")
+        for reminder in reminders:
+            try:
+                guild = None if reminder["guild"] is None else int(reminder["guild"])
+                channel = None if reminder["channel"] is None else int(reminder["channel"])
+                reminding_user = int(reminder["reminding_user"])
+                reminder_dict[(guild, channel, reminding_user)] = (reminder["until"], reminder["message"])
+            except ValueError:
+                continue
+
+    await bot.add_cog(UtilsCog(bot, reminder_dict))  # Add cog and command help info.
     bot.add_module("Utils", "[Travus](https://github.com/Travus):\n\tCommands", UtilsCog.usage,
                    """This module includes various utility commands, such as setting server info, user count, setting
                    reminders, etc. There commands are meant for use by both regular users and moderators and the
@@ -21,9 +36,9 @@ def setup(bot: tbb.TravusBotBase):
     bot.add_command_help(UtilsCog.remindme, "Utility", None, ["2h Check for a response", "2h30m Do the dishes"])
 
 
-def teardown(bot: tbb.TravusBotBase):
+async def teardown(bot: tbb.TravusBotBase):
     """Teardown function ran when module is unloaded."""
-    bot.remove_cog("UtilsCog")  # Remove cog and command help info.
+    await bot.remove_cog("UtilsCog")  # Remove cog and command help info.
     bot.remove_module("Utils")
     bot.remove_command_help(UtilsCog)
 
@@ -31,30 +46,15 @@ def teardown(bot: tbb.TravusBotBase):
 class UtilsCog(commands.Cog):
     """Cog that holds utils functionality."""
 
-    def __init__(self, bot: tbb.TravusBotBase):
+    def __init__(
+            self,
+            bot: tbb.TravusBotBase,
+            reminder_dict: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]]
+    ):
         """Initialization function loading bot object for cog."""
         self.bot = bot
-        self.reminders: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]] = {}
+        self.reminders: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]] = reminder_dict
         self.reminder_lock: Lock = Lock()
-
-        async def async_init(reminder_dict: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]]):
-            """Runs the asynchronous part of the initialization."""
-            async with self.bot.db.acquire() as conn:
-                async with conn.transaction():
-                    await conn.execute("CREATE TABLE IF NOT EXISTS reminders(guild TEXT, channel TEXT, reminding_user "
-                                       "TEXT NOT NULL, until TIMESTAMP NOT NULL, message TEXT NOT NULL)")
-                reminders = await conn.fetch("SELECT * FROM reminders")
-            async with self.reminder_lock:
-                for reminder in reminders:
-                    try:
-                        guild = None if reminder["guild"] is None else int(reminder["guild"])
-                        channel = None if reminder["channel"] is None else int(reminder["channel"])
-                        reminding_user = int(reminder["reminding_user"])
-                        reminder_dict[(guild, channel, reminding_user)] = (reminder["until"], reminder["message"])
-                    except ValueError:
-                        continue
-
-        self.bot.loop.create_task(async_init(self.reminders))
         self.remind_sender.start()
 
     def cog_unload(self):
@@ -91,7 +91,7 @@ class UtilsCog(commands.Cog):
 
         async with self.reminder_lock:
             for (guild_id, channel_id, user_id), (when, text) in copy(self.reminders).items():
-                if when > datetime.utcnow():
+                if when > discord.utils.utcnow():
                     continue
                 user = self.bot.get_user(user_id)
                 if user is None:
@@ -139,9 +139,9 @@ class UtilsCog(commands.Cog):
             else:
                 bots += 1
 
-        embed = discord.Embed(colour=discord.Color(0x4a4a4a), timestamp=datetime.utcnow())
-        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon_url)
-        embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.avatar_url)
+        embed = discord.Embed(colour=discord.Color(0x4a4a4a), timestamp=discord.utils.utcnow())
+        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon)
+        embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.display_avatar)
         embed.add_field(name="Members", value=f"{members}", inline=True)
         embed.add_field(name="Bots", value=f"{bots}", inline=True)
         await ctx.send(embed=embed)
@@ -160,10 +160,10 @@ class UtilsCog(commands.Cog):
                 bots += 1
         creation_time = ctx.guild.created_at.strftime('%b %d, %Y %I:%M %p UTC')
 
-        embed = discord.Embed(colour=discord.Color(0x4a4a4a), timestamp=datetime.utcnow())
-        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon_url)
-        embed.set_thumbnail(url=ctx.guild.icon_url)
-        embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.avatar_url)
+        embed = discord.Embed(colour=discord.Color(0x4a4a4a), timestamp=discord.utils.utcnow())
+        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon)
+        embed.set_thumbnail(url=ctx.guild.icon)
+        embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.display_avatar)
         embed.add_field(name="Information", value=f"**Server ID**: {ctx.guild.id}\n"
                                                   f"**Server Owner**: {ctx.guild.owner.mention}\n"
                                                   f"**Creation Time**: {creation_time}\n"
@@ -181,10 +181,10 @@ class UtilsCog(commands.Cog):
         a given message. It is intended to make set reminders. The command works in both DMs and channels. The time
         until the reminder should go off should be given as a duration such as `12h`, where `w` is weeks, `d` is days,
         `h` is hours, `m` is minutes and `s` is seconds. More than 1 type of time can be supplied as such; `1d12h`.
-        The bot checks every minute is a reminder should go off. The reminder will not be sent if you do not have
+        The bot checks every minute if a reminder should go off. The reminder will not be sent if you do not have
         sending permissions in the channel at the time of the reminder."""
         try:
-            duration = datetime.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
+            duration = discord.utils.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
         except ValueError:
             await ctx.send("Invalid duration. Must be valid duration and at least 1 second.")
             return

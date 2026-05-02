@@ -1,9 +1,12 @@
+import random
+import time
 from asyncio import Lock
 from copy import copy
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks  # For implementation of bot commands.
 
 import travus_bot_base as tbb  # TBB functions and classes.
@@ -11,6 +14,7 @@ import travus_bot_base as tbb  # TBB functions and classes.
 
 async def setup(bot: tbb.TravusBotBase):
     """Setup function ran when module is loaded."""
+    random.seed(time.time())
     reminder_dict: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]] = {}
     async with bot.db.acquire() as conn:
         async with conn.transaction():
@@ -34,6 +38,7 @@ async def setup(bot: tbb.TravusBotBase):
     bot.add_command_help(UtilsCog.usercount, "Utility", None, [""])
     bot.add_command_help(UtilsCog.guildinfo, "Utility", None, [""])
     bot.add_command_help(UtilsCog.remindme, "Utility", None, ["2h Check for a response", "2h30m Do the dishes"])
+    bot.add_command_help(UtilsCog.choose, "Utility", None, ["Option 1, Option 2, Option 3", "Heads, Tails"])
 
 
 async def teardown(bot: tbb.TravusBotBase):
@@ -56,6 +61,8 @@ class UtilsCog(commands.Cog):
         self.reminders: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]] = reminder_dict
         self.reminder_lock: Lock = Lock()
         self.remind_sender.start()
+        self.archive_guild = 229376044208095233
+        self.archive_role = 1194033864604127292
 
     def cog_unload(self):
         """Function that stops the task when the cog unloads."""
@@ -127,6 +134,11 @@ class UtilsCog(commands.Cog):
                                    f"{tbb.clean_no_ctx(self.bot, guild, text, False)}")
                 await remove()
 
+    def make_timestamp(self, timestamp: datetime) -> str:
+        """Returns a discord timestamp with both absolute and relative time."""
+        return f"<t:{int(timestamp.timestamp())}:f> (<t:{int(timestamp.timestamp())}:R>)"
+
+
     @commands.guild_only()
     @commands.command(name="usercount", aliases=["users"])
     async def usercount(self, ctx: commands.Context):
@@ -186,7 +198,7 @@ class UtilsCog(commands.Cog):
         try:
             duration = discord.utils.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
         except ValueError:
-            await ctx.send("Invalid duration. Must be valid duration and at least 1 second.")
+            await ctx.reply("Invalid duration. Must be valid duration and at least 1 second.", mention_author=False)
             return
         async with self.reminder_lock:
             (guild, guild_str) = (None, None) if ctx.guild is None else (ctx.guild.id, str(ctx.guild.id))
@@ -196,4 +208,25 @@ class UtilsCog(commands.Cog):
             async with self.bot.db.acquire() as conn:
                 await conn.execute("INSERT INTO reminders VALUES ($1, $2, $3, $4, $5)",
                                    guild_str, channel_str, user_str, duration, text)
-        await ctx.send(f"Ok, will do {ctx.author.mention}!")
+        await ctx.reply(f"Ok, I will remind you at {self.make_timestamp(duration)}!", mention_author=False)
+
+    @commands.command(name="choose", usage="<OPTION>[,<OPTION>,...]")
+    async def choose(self, ctx: commands.Context, *, options: str):
+        """This command lets the bot pick a random option for you. It takes any amount of options separated by
+        commas."""
+        options = [elem.strip() for elem in options.split(",")]
+        choice = random.choice(options)
+        await ctx.reply(f"Random choice: {choice}", mention_author=False)
+
+    @app_commands.command(name="archive")
+    @app_commands.guild_only()
+    async def archive(self, interaction: discord.Interaction) -> None:
+        """Toggle the archive role."""
+        guild = self.bot.get_guild(self.archive_guild)
+        role = guild.get_role(self.archive_role)
+        if role in interaction.user.roles:
+            await interaction.user.remove_roles(role, reason="User removed role using archive command.")
+            await interaction.response.send_message("You no longer have access to archived channels.", ephemeral=True)
+            return
+        await interaction.user.add_roles(role, reason="User added role using archive command.")
+        await interaction.response.send_message("You now have access to archived channels.", ephemeral=True)

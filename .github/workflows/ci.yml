@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ '**.py' ]
+  pull_request:
+    branches: [ main ]
+    paths: [ '**.py' ]
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ./_tbb
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Checkout TBB
+        uses: actions/checkout@v6
+        with:
+          repository: Travus/Travus_Bot_Base
+          ref: v2.0.0
+          path: _tbb
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+      - name: Check Black style
+        run: black --check modules/*.py
+      - name: Lint with Ruff
+        run: ruff check modules/*.py
+      - name: Lint with pylint
+        run: pylint modules/*.py
+      - name: Lint with pyright
+        run: pyright modules/*.py

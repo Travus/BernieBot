@@ -1,16 +1,16 @@
-version: '3'
-
 services:
   bot:
-    build: "."
+    build: ../Travus_Bot_Base
     depends_on:
       - postgres
     volumes:
-      - ./modules:/usr/src/app/modules
       - ./config.yml:/usr/src/app/config.yml
+      - ./modules/moderation.py:/usr/src/app/modules/moderation.py
+      - ./modules/special.py:/usr/src/app/modules/special.py
+      - ./modules/utils.py:/usr/src/app/modules/utils.py
 
   postgres:
-    image: postgres:12
+    image: postgres:16
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
@@ -18,7 +18,7 @@ services:
     volumes:
       - database:/var/lib/postgresql/data
     ports:
-    - "5432:5432"
+      - "5432:5432"
 
 volumes:
   database:

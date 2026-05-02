@@ -1,4 +1,7 @@
 venv/
+.venv/
 .idea/
 __pycache__/
+.ruff_cache/
 config.yml
+.env

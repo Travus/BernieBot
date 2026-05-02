@@ -1,3 +1,4 @@
+import re
 from asyncio import Lock
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -56,6 +57,13 @@ class ModerationCog(commands.Cog):
         self.mutes: Dict[Tuple[int, int], Optional[datetime]] = mutes_dict
         self.mute_lock: Lock = Lock()
         self.auto_unmuter.start()
+        self.alert_matches = ["__placeholder__"]
+        # self._alert_regex = fr"\b(?:{'|'.join(re.escape(word) for word in self.alert_matches)})\b"
+        self._alert_regex = re.compile(
+            fr"\b({'|'.join(re.escape(word) for word in self.alert_matches)})\b",
+            flags=re.IGNORECASE
+        )
+        self._hyperlink_pattern = re.compile(r"\[(.+?)]\((.+?)\)")
 
     def cog_unload(self):
         """Function that stops the task when the cog unloads."""
@@ -89,6 +97,31 @@ class ModerationCog(commands.Cog):
                                    f"{self.bot.config['alert_channel']}")
             return None
 
+    async def _filter_alerts(self, message: discord.Message, ctx: commands.Context):
+        """Filters for alert triggers."""
+        matches = [match.group() for match in self._alert_regex.finditer(message.content)]
+        if not matches:
+            return
+        alert_channel = self._get_alert_channel()
+        triggered = ", ".join([f"`{match}`" for match in matches])
+        self.bot.log.warning(f"{ctx.author.id}: triggered an alert! Message:\n{message.content}")
+        await alert_channel.send(f"{ctx.author.mention} triggered an alert in {message.channel.mention}!\n"
+                                 f"The alert was triggered by the following: {triggered}\n"
+                                 f"Message link: {message.jump_url}")
+
+    async def _filter_formatting(self, message: discord.Message, ctx: commands.Context):
+        """Filters for forbidden formatting."""
+        matches = [(match.group(1), match.group(2)) for match in self._hyperlink_pattern.finditer(message.content)]
+        if matches:
+            links = "\n".join(f"{elem[0]} -> {elem[1]}" for elem in matches)
+            alert_channel = self._get_alert_channel()
+            self.bot.log.warning(f"{ctx.author.id}: used a hyperlink! Message:\n{message.content}")
+            await message.reply(f"Hey {ctx.author.mention}!\nWe don't allow regular users to use hyperlinks here. "
+                                f"If you want to send links, please just post the link as-is. Thank you!")
+            await message.delete()
+            await alert_channel.send(f"{ctx.author.mention} posted hyperlink(s) in {message.channel.mention}!\n"
+                                     f"```\n{links}\n```")
+
     @staticmethod
     def usage() -> str:
         """Returns the usage text."""
@@ -118,6 +151,20 @@ class ModerationCog(commands.Cog):
                 await alert_channel.send(f"{member.mention} re-joined while muted! Re-muted user.")
             else:
                 await alert_channel.send(f"{member.mention} re-joined while muted! **Failed to re-mute user!**")
+
+    @tbb.required_config(("alert_channel", ))
+    @commands.Cog.listener("on_message")
+    async def moderation_message_listener(self, message: discord.Message):
+        """Listener that listens for messages, and checks against banned words, forbidden formatting, etc."""
+        ctx: commands.Context = await self.bot.get_context(message)
+        if ctx.author.bot:
+            return
+        if not ctx.guild:
+            return
+        if ctx.channel.permissions_for(ctx.author).manage_messages:
+            return
+        await self._filter_alerts(message, ctx)
+        await self._filter_formatting(message, ctx)
 
     @tasks.loop(seconds=15)
     async def auto_unmuter(self):

@@ -3,23 +3,23 @@ import time
 from asyncio import Lock
 from copy import copy
 from datetime import datetime, timedelta
-from typing import Dict, Tuple, Optional
 
 import discord
+import travus_bot_base as tbb  # TBB functions and classes.
 from discord import app_commands
 from discord.ext import commands, tasks  # For implementation of bot commands.
-
-import travus_bot_base as tbb  # TBB functions and classes.
 
 
 async def setup(bot: tbb.TravusBotBase):
     """Setup function ran when module is loaded."""
     random.seed(time.time())
-    reminder_dict: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]] = {}
+    reminder_dict: dict[tuple[int | None, int | None, int], tuple[datetime, str]] = {}
     async with bot.db.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("CREATE TABLE IF NOT EXISTS reminders(guild TEXT, channel TEXT, reminding_user "
-                               "TEXT NOT NULL, until TIMESTAMPTZ NOT NULL, message TEXT NOT NULL)")
+            await conn.execute(
+                "CREATE TABLE IF NOT EXISTS reminders(guild TEXT, channel TEXT, reminding_user "
+                "TEXT NOT NULL, until TIMESTAMPTZ NOT NULL, message TEXT NOT NULL)"
+            )
         reminders = await conn.fetch("SELECT * FROM reminders")
         for reminder in reminders:
             try:
@@ -31,10 +31,14 @@ async def setup(bot: tbb.TravusBotBase):
                 continue
 
     await bot.add_cog(UtilsCog(bot, reminder_dict))  # Add cog and command help info.
-    bot.add_module("Utils", "[Travus](https://github.com/Travus):\n\tCommands", UtilsCog.usage,
-                   """This module includes various utility commands, such as setting server info, user count, setting
-                   reminders, etc. There commands are meant for use by both regular users and moderators and the
-                   commands are intended to provide some value, opposed to just give fun responses.""")
+    bot.add_module(
+        "Utils",
+        "[Travus](https://github.com/Travus):\n\tCommands",
+        UtilsCog.usage,
+        """This module includes various utility commands, such as setting server info, user count, setting
+        reminders, etc. There commands are meant for use by both regular users and moderators and the
+        commands are intended to provide some value, opposed to just give fun responses.""",
+    )
     bot.add_command_help(UtilsCog.usercount, "Utility", None, [""])
     bot.add_command_help(UtilsCog.guildinfo, "Utility", None, [""])
     bot.add_command_help(UtilsCog.remindme, "Utility", None, ["2h Check for a response", "2h30m Do the dishes"])
@@ -49,32 +53,32 @@ async def teardown(bot: tbb.TravusBotBase):
 
 
 class UtilsCog(commands.Cog):
-    """Cog that holds utils functionality."""
+    """Cog that holds utility functionality."""
 
     def __init__(
-            self,
-            bot: tbb.TravusBotBase,
-            reminder_dict: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]]
+        self,
+        bot: tbb.TravusBotBase,
+        reminder_dict: dict[tuple[int | None, int | None, int], tuple[datetime, str]],
     ):
-        """Initialization function loading bot object for cog."""
+        """Initialization function loading the bot object and other variables for cog."""
         self.bot = bot
-        self.reminders: Dict[Tuple[Optional[int], Optional[int], int], Tuple[datetime, str]] = reminder_dict
+        self.reminders: dict[tuple[int | None, int | None, int], tuple[datetime, str]] = reminder_dict
         self.reminder_lock: Lock = Lock()
         self.remind_sender.start()
-        self.archive_guild = 229376044208095233
-        self.archive_role = 1194033864604127292
 
-    def cog_unload(self):
+    async def cog_unload(self):
         """Function that stops the task when the cog unloads."""
         self.remind_sender.cancel()
 
     @staticmethod
     def usage() -> str:
         """Returns the usage text."""
-        return ("**How To Use The Utils Module:**\nThis module holds miscellaneous utility commands. It has features "
-                "such as getting information about the server, the amount of users in the server, setting reminders "
-                "and more. For information on how to use the commands in this module, check their respective help "
-                "entries.")
+        return (
+            "**How To Use The Utils Module:**\nThis module holds miscellaneous utility commands. It has features "
+            "such as getting information about the server, the amount of users in the server, setting reminders "
+            "and more. For information on how to use the commands in this module, check their respective help "
+            "entries."
+        )
 
     @tasks.loop(minutes=1)
     async def remind_sender(self):
@@ -85,13 +89,23 @@ class UtilsCog(commands.Cog):
             del self.reminders[(guild_id, channel_id, user_id)]
             async with self.bot.db.acquire() as conn:
                 if guild_id:
-                    await conn.execute("DELETE FROM reminders WHERE guild = $1 AND channel = $2 "
-                                       "AND reminding_user = $3 AND until = $4 AND message = $5", str(guild_id),
-                                       str(channel_id), str(user_id), when, text)
+                    await conn.execute(
+                        "DELETE FROM reminders WHERE guild = $1 AND channel = $2 "
+                        "AND reminding_user = $3 AND until = $4 AND message = $5",
+                        str(guild_id),
+                        str(channel_id),
+                        str(user_id),
+                        when,
+                        text,
+                    )
                 else:
-                    await conn.execute("DELETE FROM reminders WHERE guild IS NULL AND channel IS NULL "
-                                       "AND reminding_user = $1 AND until = $2 AND message = $3", str(user_id), when,
-                                       text)
+                    await conn.execute(
+                        "DELETE FROM reminders WHERE guild IS NULL AND channel IS NULL "
+                        "AND reminding_user = $1 AND until = $2 AND message = $3",
+                        str(user_id),
+                        when,
+                        text,
+                    )
 
         if not self.bot.is_connected:
             return
@@ -106,8 +120,10 @@ class UtilsCog(commands.Cog):
                     await remove()
                     continue
                 if guild_id is None:
-                    await user.send(f"Hey {user.mention}, you told me to remind you:\n"
-                                    f"{tbb.clean_no_ctx(self.bot, None, text, False)}")
+                    await user.send(
+                        f"Hey {user.mention}, you told me to remind you:\n"
+                        f"{tbb.clean_no_ctx(self.bot, None, text, False)}"
+                    )
                     await remove()
                     continue
                 guild = self.bot.get_guild(guild_id)
@@ -115,45 +131,51 @@ class UtilsCog(commands.Cog):
                     self.bot.log.warning(f"Could not retrieve guild {guild_id}.")
                     await remove()
                     continue
+                assert channel_id is not None
                 channel = guild.get_channel(channel_id)
-                if channel is None:
+                if not isinstance(
+                    channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel, discord.StageChannel)
+                ):
                     self.bot.log.warning(f"Could not retrieve channel {channel_id}.")
                     await remove()
                     continue
-                user = guild.get_member(user.id)
-                if user is None:
+                member = guild.get_member(user.id)
+                if member is None:
                     self.bot.log.warning(f"Could not retrieve member {user_id} from guild {guild_id}.")
                     await remove()
                     continue
-                perms = channel.permissions_for(user)
+                perms = channel.permissions_for(member)
                 if not perms.send_messages:
                     self.bot.log.warning(f"Member {user_id} does not have sending permissions in channel {channel_id}.")
                     await remove()
                     continue
-                await channel.send(f"Hey {user.mention}, you told me to remind you:\n"
-                                   f"{tbb.clean_no_ctx(self.bot, guild, text, False)}")
+                await channel.send(
+                    f"Hey {member.mention}, you told me to remind you:\n"
+                    f"{tbb.clean_no_ctx(self.bot, guild, text, False)}"
+                )
                 await remove()
 
     def make_timestamp(self, timestamp: datetime) -> str:
         """Returns a discord timestamp with both absolute and relative time."""
         return f"<t:{int(timestamp.timestamp())}:f> (<t:{int(timestamp.timestamp())}:R>)"
 
-
     @commands.guild_only()
     @commands.command(name="usercount", aliases=["users"])
     async def usercount(self, ctx: commands.Context):
         """This command lets you see the amount of users in the server. It lists both regular users and bot users."""
+        guild = ctx.guild
+        assert guild is not None
         members = 0
         bots = 0
-        for member in ctx.guild.members:
+        for member in guild.members:
             if not member.bot:
                 members += 1
             else:
                 bots += 1
 
-        embed = discord.Embed(colour=discord.Color(0x4a4a4a), timestamp=discord.utils.utcnow())
-        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon)
-        embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.display_avatar)
+        embed = discord.Embed(colour=discord.Color(0x4A4A4A), timestamp=discord.utils.utcnow())
+        embed.set_author(name=guild.name, icon_url=guild.icon)
+        embed.set_footer(text=ctx.author.display_name, icon_url=ctx.author.display_avatar)
         embed.add_field(name="Members", value=f"{members}", inline=True)
         embed.add_field(name="Bots", value=f"{bots}", inline=True)
         await ctx.send(embed=embed)
@@ -163,32 +185,43 @@ class UtilsCog(commands.Cog):
     async def guildinfo(self, ctx: commands.Context):
         """This command lets you see the server information of the current server. It returns various statistics such
         as id, owner, member count, boost state, and more."""
+        guild = ctx.guild
+        assert guild is not None
         members = 0
         bots = 0
-        for member in ctx.guild.members:
+        for member in guild.members:
             if not member.bot:
                 members += 1
             else:
                 bots += 1
-        creation_time = ctx.guild.created_at.strftime('%b %d, %Y %I:%M %p UTC')
+        creation_time = guild.created_at.strftime("%b %d, %Y %I:%M %p UTC")
+        owner_mention = guild.owner.mention if guild.owner is not None else "Unknown"
 
-        embed = discord.Embed(colour=discord.Color(0x4a4a4a), timestamp=discord.utils.utcnow())
-        embed.set_author(name=ctx.guild.name, icon_url=ctx.guild.icon)
-        embed.set_thumbnail(url=ctx.guild.icon)
-        embed.set_footer(text=ctx.message.author.display_name, icon_url=ctx.author.display_avatar)
-        embed.add_field(name="Information", value=f"**Server ID**: {ctx.guild.id}\n"
-                                                  f"**Server Owner**: {ctx.guild.owner.mention}\n"
-                                                  f"**Creation Time**: {creation_time}\n"
-                                                  f"**Boost Level**: {ctx.guild.premium_tier} "
-                                                  f"({ctx.guild.premium_subscription_count} boosts)", inline=False)
-        embed.add_field(name="Statistics", value=f"**Member Count**: {members} users, {bots} bots\n"
-                                                 f"**Text Channels**: {len(ctx.guild.text_channels)}\n"
-                                                 f"**Voice Channels**: {len(ctx.guild.voice_channels)}\n"
-                                                 f"**Roles**: {len(ctx.guild.roles)}", inline=False)
+        embed = discord.Embed(colour=discord.Color(0x4A4A4A), timestamp=discord.utils.utcnow())
+        embed.set_author(name=guild.name, icon_url=guild.icon)
+        embed.set_thumbnail(url=guild.icon)
+        embed.set_footer(text=ctx.author.display_name, icon_url=ctx.author.display_avatar)
+        embed.add_field(
+            name="Information",
+            value=f"**Server ID**: {guild.id}\n"
+            f"**Server Owner**: {owner_mention}\n"
+            f"**Creation Time**: {creation_time}\n"
+            f"**Boost Level**: {guild.premium_tier} "
+            f"({guild.premium_subscription_count} boosts)",
+            inline=False,
+        )
+        embed.add_field(
+            name="Statistics",
+            value=f"**Member Count**: {members} users, {bots} bots\n"
+            f"**Text Channels**: {len(guild.text_channels)}\n"
+            f"**Voice Channels**: {len(guild.voice_channels)}\n"
+            f"**Roles**: {len(guild.roles)}",
+            inline=False,
+        )
         await ctx.send(embed=embed)
 
     @commands.command(name="remindme", aliases=["reminder"], usage="<TIME UNTIL REMINDER> <TEXT>")
-    async def remindme(self, ctx: commands.Context, duration: str, *, text: str):
+    async def remindme(self, ctx: commands.Context, duration_str: str, *, text: str):
         """This command will make the bot post a message in the channel it is used after some period of time, with
         a given message. It is intended to make set reminders. The command works in both DMs and channels. The time
         until the reminder should go off should be given as a duration such as `12h`, where `w` is weeks, `d` is days,
@@ -196,34 +229,46 @@ class UtilsCog(commands.Cog):
         The bot checks every minute if a reminder should go off. The reminder will not be sent if you do not have
         sending permissions in the channel at the time of the reminder."""
         try:
-            duration = discord.utils.utcnow() + timedelta(seconds=tbb.parse_time(duration, 1))
+            duration = discord.utils.utcnow() + timedelta(seconds=tbb.parse_time(duration_str, 1))
         except ValueError:
             await ctx.reply("Invalid duration. Must be valid duration and at least 1 second.", mention_author=False)
             return
         async with self.reminder_lock:
-            (guild, guild_str) = (None, None) if ctx.guild is None else (ctx.guild.id, str(ctx.guild.id))
-            (channel, channel_str) = (None, None) if ctx.guild is None else (ctx.channel.id, str(ctx.channel.id))
-            (user, user_str) = (ctx.author.id, str(ctx.author.id))
+            guild, guild_str = (None, None) if ctx.guild is None else (ctx.guild.id, str(ctx.guild.id))
+            channel, channel_str = (None, None) if ctx.guild is None else (ctx.channel.id, str(ctx.channel.id))
+            user, user_str = (ctx.author.id, str(ctx.author.id))
             self.reminders[(guild, channel, user)] = (duration, text)
             async with self.bot.db.acquire() as conn:
-                await conn.execute("INSERT INTO reminders VALUES ($1, $2, $3, $4, $5)",
-                                   guild_str, channel_str, user_str, duration, text)
+                await conn.execute(
+                    "INSERT INTO reminders VALUES ($1, $2, $3, $4, $5)",
+                    guild_str,
+                    channel_str,
+                    user_str,
+                    duration,
+                    text,
+                )
         await ctx.reply(f"Ok, I will remind you at {self.make_timestamp(duration)}!", mention_author=False)
 
     @commands.command(name="choose", usage="<OPTION>[,<OPTION>,...]")
-    async def choose(self, ctx: commands.Context, *, options: str):
+    async def choose(self, ctx: commands.Context, *, options_str: str):
         """This command lets the bot pick a random option for you. It takes any amount of options separated by
         commas."""
-        options = [elem.strip() for elem in options.split(",")]
+        options = [elem.strip() for elem in options_str.split(",")]
         choice = random.choice(options)
         await ctx.reply(f"Random choice: {choice}", mention_author=False)
 
     @app_commands.command(name="archive")
     @app_commands.guild_only()
+    @tbb.required_config(["archive_role_id"])
     async def archive(self, interaction: discord.Interaction) -> None:
         """Toggle the archive role."""
-        guild = self.bot.get_guild(self.archive_guild)
-        role = guild.get_role(self.archive_role)
+        assert isinstance(interaction.user, discord.Member)
+        guild = interaction.guild
+        assert guild is not None
+        role = guild.get_role(int(self.bot.config["archive_role_id"]))
+        if role is None:
+            await interaction.response.send_message("The role could not be found.", ephemeral=True)
+            return
         if role in interaction.user.roles:
             await interaction.user.remove_roles(role, reason="User removed role using archive command.")
             await interaction.response.send_message("You no longer have access to archived channels.", ephemeral=True)

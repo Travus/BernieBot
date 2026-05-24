@@ -5,7 +5,7 @@ from io import BytesIO
 
 import discord.utils
 import travus_bot_base as tbb
-from discord import Colour, Embed, File, Forbidden, HTTPException, Member, Message, NotFound, TextChannel
+from discord import Colour, Embed, File, Forbidden, HTTPException, Member, Message, NotFound, Role, TextChannel
 from discord.ext import commands, tasks
 
 
@@ -14,7 +14,7 @@ async def setup(bot: tbb.TravusBotBase):
     alert_channel_id = bot.config.get("alert_channel_id")
     mute_role_id = bot.config.get("mute_role_id")
     if not alert_channel_id or not mute_role_id:
-        raise RuntimeError("required config options; `alert_channel_id` and `mute_role_id`")
+        raise RuntimeError("required config options: `alert_channel_id` and `mute_role_id`")
     try:
         alert_channel = bot.get_channel(int(alert_channel_id))
     except ValueError as exc:
@@ -83,7 +83,7 @@ class ModerationCog(commands.Cog):
         bot: tbb.TravusBotBase,
         mutes_dict: dict[tuple[int, int], datetime | None],
         alert_channel: TextChannel,
-        mute_role: discord.Role,
+        mute_role: Role,
     ):
         """Initialization function loading the bot object for cog."""
         self.bot = bot
@@ -92,6 +92,7 @@ class ModerationCog(commands.Cog):
         self.mute_role = mute_role
         self.mute_lock: Lock = Lock()
         self.auto_unmuter.start()
+        self.cache_refresher.start()
         self.alert_matches = ["__placeholder__"]
         self._alert_regex = re.compile(
             rf"\b({'|'.join(re.escape(word) for word in self.alert_matches)})\b", flags=re.IGNORECASE
@@ -99,8 +100,9 @@ class ModerationCog(commands.Cog):
         self._hyperlink_pattern = re.compile(r"\[(.+?)]\((.+?)\)")
 
     async def cog_unload(self):
-        """Function that stops the task when the cog unloads."""
+        """Function that stops the tasks when the cog unloads."""
         self.auto_unmuter.cancel()
+        self.cache_refresher.cancel()
 
     async def _filter_alerts(self, message: discord.Message, ctx: commands.Context):
         """Filters for alert triggers."""
@@ -136,6 +138,28 @@ class ModerationCog(commands.Cog):
         await self.alert_channel.send(
             f"{ctx.author.mention} posted hyperlink(s) in {message.channel.mention}!\n```\n{links}\n```"
         )
+
+    async def _resolve_mute_role(self, ctx: commands.Context) -> Role | None:
+        """Returns the mute role. Returns None if not found. Also updates the internal cache."""
+        guild = ctx.guild
+        assert guild is not None
+        mute_role = guild.get_role(int(self.bot.config["mute_role_id"]))
+        if mute_role is None:
+            await ctx.send("The mute role could not be found.")
+            return None
+        self.mute_role = mute_role
+        return mute_role
+
+    async def _resolve_alert_channel(self, ctx: commands.Context) -> TextChannel | None:
+        """Returns the alert channel. Returns None if not found. Also updates the internal cache."""
+        guild = ctx.guild
+        assert guild is not None
+        alert_channel = self.bot.get_channel(int(self.bot.config["alert_channel_id"]))
+        if not isinstance(alert_channel, TextChannel):
+            await ctx.send("The alert channel could not be found.")
+            return None
+        self.alert_channel = alert_channel
+        return alert_channel
 
     @staticmethod
     def usage() -> str:
@@ -191,8 +215,11 @@ class ModerationCog(commands.Cog):
                 if expiry is None or expiry > discord.utils.utcnow():
                     continue
                 guild = self.bot.get_guild(guild_id)
-                member = guild.get_member(member_id) if guild is not None else None
-                if guild is None or member is None:
+                if guild is None:
+                    self.bot.log.warning(f"Could not retrieve guild from ID {guild_id}.")
+                    continue
+                member = guild.get_member(member_id)
+                if member is None:
                     self.bot.log.warning(f"Could not retrieve member {member_id} from guild {guild_id}.")
                     continue
 
@@ -214,6 +241,30 @@ class ModerationCog(commands.Cog):
                         "DELETE FROM mutes WHERE guild = $1 AND muted_user = $2", str(guild.id), str(member.id)
                     )
                 await self.alert_channel.send(f"Mute of {member.mention} expired. User unmuted.")
+
+    @tasks.loop(minutes=10)
+    async def cache_refresher(self):
+        """Periodically refreshes the cached mute role and alert channel references from config."""
+        if not self.bot.is_connected:
+            return
+        try:
+            mute_role_id = int(self.bot.config["mute_role_id"])
+            alert_channel_id = int(self.bot.config["alert_channel_id"])
+        except (KeyError, ValueError):
+            self.bot.log.warning("Could not parse mute_role_id or alert_channel_id during cache refresh.")
+            return
+
+        mute_role = self.mute_role.guild.get_role(mute_role_id)
+        if mute_role is not None:
+            self.mute_role = mute_role
+        else:
+            self.bot.log.warning(f"Mute role {mute_role_id} not found during cache refresh.")
+
+        alert_channel = self.bot.get_channel(alert_channel_id)
+        if isinstance(alert_channel, TextChannel):
+            self.alert_channel = alert_channel
+        else:
+            self.bot.log.warning(f"Alert channel {alert_channel_id} not found during cache refresh.")
 
     @commands.guild_only()
     @commands.has_permissions(manage_guild=True)
@@ -312,9 +363,8 @@ class ModerationCog(commands.Cog):
         if not target_channel.permissions_for(author).manage_messages:
             await ctx.send(f"You do not have permissions to delete messages in {tbb.clean(ctx, target_channel.name)}.")
             return
-        alert_channel = self.bot.get_channel(int(self.bot.config["alert_channel_id"]))
-        if not isinstance(alert_channel, TextChannel):
-            await ctx.send("The alert channel could not be found.")
+        alert_channel = await self._resolve_alert_channel(ctx)
+        if alert_channel is None:
             return
 
         deleted_messages: list[Message] = []
@@ -332,7 +382,7 @@ class ModerationCog(commands.Cog):
         for msg in deleted_messages:
             msg_time = (
                 f"[{msg.edited_at.isoformat(timespec='minutes')} (edit)]"
-                if msg.edited_at
+                if msg.edited_at is not None
                 else f"[{msg.created_at.isoformat(timespec='minutes')}]"
             )
             text = f"{msg_time} Message {msg.id} by {msg.author} ({msg.author.id}):\n"
@@ -364,18 +414,17 @@ class ModerationCog(commands.Cog):
         mutes outright."""
         guild = ctx.guild
         assert guild is not None
-        assert isinstance(ctx.author, Member)
-        if ctx.author.top_role <= member.top_role and ctx.author.id != guild.owner_id:
+        author = ctx.author
+        assert isinstance(author, Member)
+        if author.top_role <= member.top_role and author.id != guild.owner_id:
             await ctx.send("You can only mute members below you in the role hierarchy.")
             return
 
-        mute_role = guild.get_role(int(self.bot.config["mute_role_id"]))
+        mute_role = await self._resolve_mute_role(ctx)
         if mute_role is None:
-            await ctx.send("The mute role could not be found.")
             return
-        alert_channel = self.bot.get_channel(int(self.bot.config["alert_channel_id"]))
-        if not isinstance(alert_channel, TextChannel):
-            await ctx.send("The alert channel could not be found.")
+        alert_channel = await self._resolve_alert_channel(ctx)
+        if alert_channel is None:
             return
 
         mute_until: datetime | None = None
@@ -385,24 +434,26 @@ class ModerationCog(commands.Cog):
             except ValueError:
                 await ctx.send("Invalid duration. Must be valid duration and at least 1 second.")
                 return
+
         try:
-            await member.add_roles(mute_role)
+            async with self.mute_lock:
+                async with self.bot.db.acquire() as conn, conn.transaction():
+                    await conn.execute(
+                        "INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) "
+                        "DO UPDATE SET until = $3",
+                        str(member.guild.id),
+                        str(member.id),
+                        mute_until,
+                    )
+                    await member.add_roles(mute_role)
+                self.mutes[(member.guild.id, member.id)] = mute_until
         except Forbidden:
             await ctx.send("Lacking permission to assign mute role.")
             return
-        async with self.mute_lock:
-            self.mutes[(member.guild.id, member.id)] = mute_until
-            async with self.bot.db.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO mutes VALUES ($1, $2, $3) ON CONFLICT (guild, muted_user) DO UPDATE SET until = $3",
-                    str(member.guild.id),
-                    str(member.id),
-                    mute_until,
-                )
 
         embed = Embed(
             colour=Colour(0x4A4A4A),
-            description=f"{member.mention} was{' temporarily' if mute_until else ''} muted by {ctx.author.mention}!",
+            description=f"{member.mention} was{' temporarily' if mute_until else ''} muted by {author.mention}!",
             timestamp=(mute_until if mute_until else discord.utils.utcnow()),
         )
         embed.set_author(name="Mute")
@@ -419,37 +470,39 @@ class ModerationCog(commands.Cog):
         """This command lets you unmute a user. Unmuting a user will lift both temporary and permanent mutes."""
         guild = ctx.guild
         assert guild is not None
-        assert isinstance(ctx.author, Member)
-        if ctx.author.top_role <= member.top_role and ctx.author.id != guild.owner_id:
+        author = ctx.author
+        assert isinstance(author, Member)
+        if author.top_role <= member.top_role and author.id != guild.owner_id:
             await ctx.send("You can only unmute members below you in the role hierarchy.")
             return
 
-        mute_role = guild.get_role(int(self.bot.config["mute_role_id"]))
+        mute_role = await self._resolve_mute_role(ctx)
         if mute_role is None:
-            await ctx.send("The mute role could not be found.")
             return
-        alert_channel = self.bot.get_channel(int(self.bot.config["alert_channel_id"]))
-        if not isinstance(alert_channel, TextChannel):
-            await ctx.send("The alert channel could not be found.")
+        alert_channel = await self._resolve_alert_channel(ctx)
+        if alert_channel is None:
             return
 
-        if (member.guild.id, member.id) not in self.mutes:
-            await ctx.send("This user is not muted.")
-            return
         try:
-            await member.remove_roles(mute_role)
+            async with self.mute_lock:
+                if (member.guild.id, member.id) not in self.mutes:
+                    await ctx.send("This user is not muted.")
+                    return
+                async with self.bot.db.acquire() as conn, conn.transaction():
+                    await conn.execute(
+                        "DELETE FROM mutes WHERE guild = $1 AND muted_user = $2",
+                        str(member.guild.id),
+                        str(member.id),
+                    )
+                    await member.remove_roles(mute_role)
+                del self.mutes[(member.guild.id, member.id)]
         except Forbidden:
             await ctx.send("Lacking permission to unmute.")
             return
-        async with self.mute_lock:
-            del self.mutes[(member.guild.id, member.id)]
-            async with self.bot.db.acquire() as conn:
-                await conn.execute(
-                    "DELETE FROM mutes WHERE guild = $1 AND muted_user = $2", str(member.guild.id), str(member.id)
-                )
+
         embed = Embed(
             colour=Colour(0x4A4A4A),
-            description=f"{member.mention} was unmuted by {ctx.author.mention}!",
+            description=f"{member.mention} was unmuted by {author.mention}!",
             timestamp=discord.utils.utcnow(),
         )
         embed.set_author(name="Unmute")

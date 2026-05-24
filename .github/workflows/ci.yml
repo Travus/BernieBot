@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches: [ main ]
-    paths: [ '**.py' ]
+    paths: [ '**.py', 'scripts/**' ]
   pull_request:
     branches: [ main ]
-    paths: [ '**.py' ]
+    paths: [ '**.py', 'scripts/**' ]
 
 jobs:
   lint:
@@ -39,3 +39,16 @@ jobs:
         run: pylint modules/*.py
       - name: Lint with pyright
         run: pyright modules/*.py
+
+  shell-test:
+    name: Test assembly script
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Shellcheck
+        run: |
+          command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+          shellcheck scripts/*.sh
+      - name: Run assemble_modules tests
+        run: bash scripts/test_assemble_modules.sh
